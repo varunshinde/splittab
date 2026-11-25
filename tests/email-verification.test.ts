@@ -34,6 +34,7 @@ vi.mock("../lib/mail", () => ({
   getAppUrl: () => "http://localhost:3000",
   verificationEmailHtml: (link: string) => link,
   resetEmailHtml: (link: string) => link,
+  existingAccountEmailHtml: () => "existing-account notice",
 }));
 
 import { tokenState, tokenExpiry, VERIFICATION_TTL_MS, RESET_TTL_MS } from "../lib/tokens";
@@ -86,7 +87,7 @@ const run = hasDb ? describe : describe.skip;
 
 run("email verification + password reset flow (DB, mail mocked)", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let prisma: any, authActions: any, mail: any, verifyRoute: any, authUtils: any;
+  let prisma: any, authActions: any, mail: any, verifyPage: any, authUtils: any;
   const suffix = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
   const email = `verify-${suffix}@example.com`;
   const password = "verify-pass-123";
@@ -109,7 +110,7 @@ run("email verification + password reset flow (DB, mail mocked)", () => {
     prisma = (await import("../lib/db")).prisma;
     authActions = await import("../app/auth-actions");
     mail = await import("../lib/mail");
-    verifyRoute = await import("../app/verify-email/route");
+    verifyPage = (await import("../app/verify-email/page")).default;
     authUtils = await import("../lib/auth-utils");
   }, 60000);
 
@@ -118,15 +119,16 @@ run("email verification + password reset flow (DB, mail mocked)", () => {
     await prisma.$disconnect();
   }, 60000);
 
-  it("signup creates an UNVERIFIED account, sends a link, and does NOT log in", async () => {
+  it("signup collects NO password (F2): account starts passwordless + unverified, link is emailed", async () => {
     jar.clear();
-    await expect(authActions.signupAction(form({ name: "Vera", email, password })))
+    await expect(authActions.signupAction(form({ name: "Vera", email })))
       .rejects.toThrow(/NEXT_REDIRECT \/login\?notice=/);
     const user = await prisma.user.findUnique({ where: { email } });
     expect(user).not.toBeNull();
     userId = user.id;
+    expect(user.passwordHash).toBeNull(); // no password exists until the owner sets one
     expect(user.emailVerifiedAt).toBeNull();
-    expect(user.passwordHash).not.toBe(password);
+    expect(user.isPlaceholder).toBe(false);
     expect(jar.get("session")).toBeUndefined(); // not logged in
     expect(mail.sendEmail).toHaveBeenCalled();
     const sentTo = mail.sendEmail.mock.calls[mail.sendEmail.mock.calls.length - 1][0].to;
@@ -138,34 +140,50 @@ run("email verification + password reset flow (DB, mail mocked)", () => {
     expect(tokens[0].usedAt).toBeNull();
   }, 30000);
 
-  it("login with the CORRECT password is blocked while unverified", async () => {
+  it("login is impossible before setup completes (no password exists to guess)", async () => {
     jar.clear();
     await expect(authActions.loginAction(form({ email, password })))
-      .rejects.toThrow(/unverified=1/);
+      .rejects.toThrow(/NEXT_REDIRECT \/login\?error=/);
     expect(jar.get("session")).toBeUndefined();
-    // ...while a wrong password still gets only the generic error
-    await expect(authActions.loginAction(form({ email, password: "wrong-password" })))
-      .rejects.toThrow(/Invalid%20email%20or%20password/);
   }, 30000);
 
-  it("verify-email consumes the token (single-use) and unblocks login", async () => {
-    const { NextRequest } = await import("next/server");
-    const link = verifyLink;
-    const res = await verifyRoute.GET(new NextRequest(link));
-    expect(res.headers.get("location")).toContain("notice=");
-    const user = await prisma.user.findUnique({ where: { email } });
+  it("the setup page GET does NOT consume the token (F9); completing signup sets the password exactly once", async () => {
+    const token = tokenFromLink(verifyLink);
+    // A mail scanner / prefetcher hitting the link must not burn it.
+    await verifyPage({ searchParams: Promise.resolve({ token }) });
+    let tokenRow = await prisma.emailVerificationToken.findFirst({ where: { userId } });
+    expect(tokenRow.usedAt).toBeNull();
+    let user = await prisma.user.findUnique({ where: { email } });
+    expect(user.emailVerifiedAt).toBeNull();
+    expect(user.passwordHash).toBeNull();
+    // The owner completes setup: password set, email verified, token used.
+    await expect(authActions.completeSignupAction(form({ token, name: "Vera", password })))
+      .rejects.toThrow(/NEXT_REDIRECT \/login\?notice=/);
+    user = await prisma.user.findUnique({ where: { email } });
     expect(user.emailVerifiedAt).not.toBeNull();
-    const tokenRow = await prisma.emailVerificationToken.findFirst({ where: { userId } });
+    await expect(authUtils.verifyPassword(password, user.passwordHash)).resolves.toBe(true);
+    tokenRow = await prisma.emailVerificationToken.findFirst({ where: { userId } });
     expect(tokenRow.usedAt).not.toBeNull();
-    // Single-use: the same link now fails generically.
-    const res2 = await verifyRoute.GET(new NextRequest(link));
-    expect(res2.headers.get("location")).toContain("error=");
+    // Replay: the same token cannot set a second password.
+    await expect(authActions.completeSignupAction(form({ token, name: "Vera", password: "attacker-pass-999" })))
+      .rejects.toThrow(/NEXT_REDIRECT \/login\?error=/);
+    const user2 = await prisma.user.findUnique({ where: { email } });
+    await expect(authUtils.verifyPassword(password, user2.passwordHash)).resolves.toBe(true);
     // Login now succeeds and mints a session.
     jar.clear();
     await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/dashboard/);
     expect(jar.get("session")).toBeTruthy();
     const sessions = await prisma.session.count({ where: { userId } });
     expect(sessions).toBe(1);
+  }, 30000);
+
+  it("duplicate signup is indistinguishable and creates nothing (F3)", async () => {
+    const before = await prisma.user.count({ where: { email } });
+    await expect(authActions.signupAction(form({ name: "Copy Cat", email })))
+      .rejects.toThrow(/NEXT_REDIRECT \/login\?notice=/);
+    expect(await prisma.user.count({ where: { email } })).toBe(before);
+    const tokens = await prisma.emailVerificationToken.count({ where: { userId } });
+    expect(tokens).toBe(1); // no new setup token was issued
   }, 30000);
 
   it("password reset: generic request, token works once, ALL sessions revoked", async () => {

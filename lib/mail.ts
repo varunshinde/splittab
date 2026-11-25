@@ -54,11 +54,18 @@ function wrap(title: string, bodyHtml: string): string {
 }
 
 export function verificationEmailHtml(link: string): string {
-  return wrap("Verify your email", `
-    <p>Welcome to SplitTab! Confirm this email address to activate your account:</p>
-    <p><a href="${link}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Verify my email</a></p>
+  return wrap("Finish setting up your account", `
+    <p>Welcome to SplitTab! Click below to choose your password and activate your account:</p>
+    <p><a href="${link}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Set up my account</a></p>
     <p>Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
     <p>This link expires in 24 hours.</p>`);
+}
+
+export function existingAccountEmailHtml(): string {
+  return wrap("You already have an account", `
+    <p>Someone (probably you) just tried to sign up for SplitTab with this email address — but an account already exists for it.</p>
+    <p>No changes were made. Just log in with your existing password; if you forgot it, use the "Forgot password" link on the login page.</p>
+    <p>If this wasn't you, you can ignore this email — your account is unchanged.</p>`);
 }
 
 export function resetEmailHtml(link: string): string {

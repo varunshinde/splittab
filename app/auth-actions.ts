@@ -6,7 +6,7 @@ import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COO
 import { generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
 import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
-import { getAppUrl, resetEmailHtml, sendEmail, verificationEmailHtml } from "@/lib/mail";
+import { existingAccountEmailHtml, getAppUrl, resetEmailHtml, sendEmail, verificationEmailHtml } from "@/lib/mail";
 import { RESET_TTL_MS, tokenExpiry, tokenState, VERIFICATION_TTL_MS } from "@/lib/tokens";
 import { capString, MAX_NAME_LEN } from "@/lib/validate";
 
@@ -49,7 +49,6 @@ export async function signupAction(formData: FormData) {
   const ip = clientIp(hdrs);
   const name = capString(formData.get("name"), MAX_NAME_LEN, "name");
   const email = normalizeEmail(String(formData.get("email") ?? ""));
-  const password = String(formData.get("password") ?? "");
 
   // Per-IP signup throttle (10/hour). Generic message — no details leaked.
   if (await checkSignupThrottle(ip)) {
@@ -58,42 +57,76 @@ export async function signupAction(formData: FormData) {
   }
   if (!name) backTo("/signup", "Please enter your name.");
   if (!isValidEmail(email)) backTo("/signup", "Please enter a valid email address.");
-  if (password.length < MIN_PASSWORD_LENGTH) backTo("/signup", `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
 
+  // F2: NO password is collected at signup. A password set before the email
+  // is verified enables account pre-hijack (attacker signs up with the
+  // victim's email + attacker's password; victim's verification click arms
+  // it). Instead the emailed link lands on a set-password page, and the
+  // password is only stored when the inbox owner completes that step.
   const existing = await prisma.user.findUnique({ where: { email } });
   const decision = decideSignup(existing ? { id: existing.id, email: existing.email, isPlaceholder: existing.isPlaceholder } : null);
+  // Every non-throttled path lands on the SAME generic outcome (F3): the
+  // response never reveals whether the email was new, a placeholder claim,
+  // or an already-registered account.
+  const done = `/login?notice=${encodeURIComponent("Check your email — we sent you a link to finish setting up your account. If you already have an account, you can just log in.")}`;
   if (decision.kind === "duplicate-email") {
-    // No user enumeration: never confirm that this email has an account.
+    // Already registered: create nothing, change nothing. The owner gets a
+    // notice email (which doubles as an alert if it wasn't them).
     await recordAttempt("signup", email, ip, false);
-    backTo("/signup", "We couldn't create an account with those details. If you already have an account, try logging in instead.");
+    await sendEmail({ to: email, subject: "Your SplitTab account", html: existingAccountEmailHtml() });
+    redirect(done);
   }
-  const passwordHash = await hashPassword(password);
   let userId: string;
   if (decision.kind === "claim-placeholder") {
-    // Claim the shadow account created when someone added this email as a
-    // friend / group member: keep its expenses and friendships, attach the
-    // real name + a NEW password. A placeholder has no sessions to inherit
-    // (it could never log in), and any stray sessions are revoked anyway.
-    await prisma.session.deleteMany({ where: { userId: decision.userId } });
-    const claimed = await prisma.user.update({
-      where: { id: decision.userId },
-      data: { name, passwordHash, isPlaceholder: false },
-    });
-    userId = claimed.id;
+    // Do NOT flip isPlaceholder or set anything yet: the placeholder is only
+    // claimed when the set-password step completes (see completeSignup).
+    userId = decision.userId;
   } else {
-    const user = await prisma.user.create({ data: { name, email, passwordHash } });
+    const user = await prisma.user.create({ data: { name, email } });
     userId = user.id;
   }
   await recordAttempt("signup", email, ip, true);
-  // The account starts UNVERIFIED and is NOT logged in. A verification link
-  // is emailed; login stays blocked until the link is used, which is what
-  // proves ownership of the email (this is also what makes placeholder
-  // claiming safe: the claimer must control the invited inbox).
   const sent = await sendVerificationEmail(userId, email);
   if (!sent.ok) {
-    backTo("/signup", "Your account was created, but the verification email couldn't be sent right now. Please contact support, or try the resend option on the login page later.");
+    backTo("/signup", "We couldn't send the setup email right now. Please try the resend option on the login page in a few minutes.");
   }
-  redirect(`/login?notice=${encodeURIComponent("Account created — we emailed you a verification link. Verify your email, then log in.")}`);
+  redirect(done);
+}
+
+/** Complete a signup: the emailed link's landing step. Sets the password,
+ *  marks the email verified and (for invited placeholders) claims the
+ *  account — all only now, when inbox ownership is proven. The token is
+ *  consumed ATOMICALLY (F9): updateMany with usedAt still null, so two
+ *  concurrent submissions can't both succeed. */
+export async function completeSignupAction(formData: FormData) {
+  const raw = String(formData.get("token") ?? "");
+  const name = capString(formData.get("name"), MAX_NAME_LEN, "name");
+  const password = String(formData.get("password") ?? "");
+  const back = (error: string): never =>
+    redirect(`/verify-email?token=${encodeURIComponent(raw)}&error=${encodeURIComponent(error)}`);
+  const token = raw
+    ? await prisma.emailVerificationToken.findUnique({ where: { tokenHash: hashToken(raw) } }).catch(() => null)
+    : null;
+  if (!token || tokenState(token) !== "valid") {
+    redirect(`/login?error=${encodeURIComponent("That setup link is invalid or has expired. Log in to request a new one.")}`);
+  }
+  if (!name) back("Please enter your name.");
+  const pwError = validateNewPassword(password);
+  if (pwError) back(pwError);
+  const consumed = await prisma.emailVerificationToken.updateMany({
+    where: { id: token.id, usedAt: null, expiresAt: { gt: new Date() } },
+    data: { usedAt: new Date() },
+  });
+  if (consumed.count !== 1) {
+    redirect(`/login?error=${encodeURIComponent("That setup link is invalid or has expired. Log in to request a new one.")}`);
+  }
+  const passwordHash = await hashPassword(password);
+  await prisma.session.deleteMany({ where: { userId: token.userId } });
+  await prisma.user.update({
+    where: { id: token.userId },
+    data: { name, passwordHash, emailVerifiedAt: new Date(), isPlaceholder: false },
+  });
+  redirect(`/login?notice=${encodeURIComponent("Your account is ready — log in with your new password.")}`);
 }
 
 export async function loginAction(formData: FormData) {
@@ -139,7 +172,7 @@ export async function resendVerificationAction(formData: FormData) {
   const generic = `/login?notice=${encodeURIComponent("If an unverified account exists for that email, a new verification link is on its way.")}`;
   if (isValidEmail(email) && !(await checkEmailSendThrottle("verify_resend", email)) && !(await checkEmailSendIpThrottle("verify_resend", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
-    if (user && user.passwordHash && !user.emailVerifiedAt && !user.isPlaceholder) {
+    if (user && !user.emailVerifiedAt && !user.isPlaceholder) {
       await sendVerificationEmail(user.id, email);
       await recordAttempt("verify_resend", email, ip, true);
     }
@@ -155,7 +188,7 @@ export async function forgotPasswordAction(formData: FormData) {
   const generic = `/forgot-password?notice=${encodeURIComponent("If an account exists for that email, a password reset link is on its way.")}`;
   if (isValidEmail(email) && !(await checkEmailSendThrottle("password_reset", email)) && !(await checkEmailSendIpThrottle("password_reset", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
-    if (user && user.passwordHash && !user.isPlaceholder) {
+    if (user && !user.isPlaceholder) {
       await sendResetEmail(user.id, email);
       await recordAttempt("password_reset", email, ip, true);
     }
@@ -178,13 +211,21 @@ export async function resetPasswordAction(formData: FormData) {
   if (pwError) {
     redirect(`/reset-password?token=${encodeURIComponent(raw)}&error=${encodeURIComponent(pwError)}`);
   }
+  // Consume ATOMICALLY (F9): only the request that flips usedAt from null
+  // proceeds; a concurrent replay loses the race and changes nothing.
+  const consumed = await prisma.passwordResetToken.updateMany({
+    where: { id: token.id, usedAt: null, expiresAt: { gt: new Date() } },
+    data: { usedAt: new Date() },
+  });
+  if (consumed.count !== 1) {
+    redirect(`/reset-password?error=${encodeURIComponent("That reset link is invalid or has expired. Request a new one.")}`);
+  }
   const passwordHash = await hashPassword(password);
   await prisma.user.update({
     where: { id: token.userId },
     // A completed reset also proves inbox ownership -> verify the email.
-    data: { passwordHash, emailVerifiedAt: new Date() },
+    data: { passwordHash, emailVerifiedAt: new Date(), isPlaceholder: false },
   });
-  await prisma.passwordResetToken.update({ where: { id: token.id }, data: { usedAt: new Date() } });
   await prisma.session.deleteMany({ where: { userId: token.userId } }); // revoke ALL sessions
   redirect(`/login?notice=${encodeURIComponent("Password updated. Please log in with your new password.")}`);
 }
