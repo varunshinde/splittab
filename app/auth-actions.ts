@@ -11,11 +11,12 @@ import {
   challengeState, describeDevice, deviceHashFor, generateLoginCode, hashLoginCode, locationChanged,
   locationLabel, loginCodeMatches, parseGeo, DEVICE_CHALLENGE_COOKIE, LOGIN_CODE_TTL_MS,
 } from "@/lib/device";
+import { flashUrl, passwordFlashCode, type FlashCode } from "@/lib/flash";
 import { RESET_TTL_MS, tokenExpiry, tokenState, VERIFICATION_TTL_MS } from "@/lib/tokens";
 import { capString, MAX_NAME_LEN } from "@/lib/validate";
 
-function backTo(path: string, error: string): never {
-  redirect(`${path}?error=${encodeURIComponent(error)}`);
+function backTo(path: string, code: FlashCode): never {
+  redirect(flashUrl(path, "error", code));
 }
 
 /** Run a task after the response is sent (Next `after()`), so response
@@ -31,7 +32,6 @@ async function inBackground(task: () => Promise<unknown>) {
   }
 }
 
-const GENERIC_LOGIN_ERROR = "Invalid email or password.";
 
 /** Issue a fresh verification token (invalidating prior unused ones) and
  *  email the link. Returns the send result so callers can surface outages. */
@@ -70,10 +70,10 @@ export async function signupAction(formData: FormData) {
   // Per-IP signup throttle (10/hour). Generic message — no details leaked.
   if (await checkSignupThrottle(ip)) {
     await recordAttempt("signup", email, ip, false);
-    backTo("/signup", "Too many attempts. Please wait a while and try again.");
+    backTo("/signup", "too_many_attempts");
   }
-  if (!name) backTo("/signup", "Please enter your name.");
-  if (!isValidEmail(email)) backTo("/signup", "Please enter a valid email address.");
+  if (!name) backTo("/signup", "name_required");
+  if (!isValidEmail(email)) backTo("/signup", "invalid_email");
 
   // F2: NO password is collected at signup. A password set before the email
   // is verified enables account pre-hijack (attacker signs up with the
@@ -85,7 +85,7 @@ export async function signupAction(formData: FormData) {
   // Every non-throttled path lands on the SAME generic outcome (F3): the
   // response never reveals whether the email was new, a placeholder claim,
   // or an already-registered account.
-  const done = `/login?notice=${encodeURIComponent("Check your email — we sent you a link to finish setting up your account. If you already have an account, you can just log in.")}`;
+  const done = flashUrl("/login", "notice", "signup_check_email");
   if (decision.kind === "duplicate-email") {
     // Already registered: create nothing, change nothing. The owner gets a
     // notice email (which doubles as an alert if it wasn't them).
@@ -105,7 +105,7 @@ export async function signupAction(formData: FormData) {
   await recordAttempt("signup", email, ip, true);
   const sent = await sendVerificationEmail(userId, email);
   if (!sent.ok) {
-    backTo("/signup", "We couldn't send the setup email right now. Please try the resend option on the login page in a few minutes.");
+    backTo("/signup", "signup_send_failed");
   }
   redirect(done);
 }
@@ -119,23 +119,23 @@ export async function completeSignupAction(formData: FormData) {
   const raw = String(formData.get("token") ?? "");
   const name = capString(formData.get("name"), MAX_NAME_LEN, "name");
   const password = String(formData.get("password") ?? "");
-  const back = (error: string): never =>
-    redirect(`/verify-email?token=${encodeURIComponent(raw)}&error=${encodeURIComponent(error)}`);
+  const back = (code: FlashCode): never =>
+    redirect(flashUrl(`/verify-email?token=${encodeURIComponent(raw)}`, "error", code));
   const token = raw
     ? await prisma.emailVerificationToken.findUnique({ where: { tokenHash: hashToken(raw) } }).catch(() => null)
     : null;
   if (!token || tokenState(token) !== "valid") {
-    redirect(`/login?error=${encodeURIComponent("That setup link is invalid or has expired. Log in to request a new one.")}`);
+    redirect(flashUrl("/login", "error", "setup_link_invalid"));
   }
-  if (!name) back("Please enter your name.");
+  if (!name) back("name_required");
   const pwError = validateNewPassword(password);
-  if (pwError) back(pwError);
+  if (pwError) back(passwordFlashCode(pwError));
   const consumed = await prisma.emailVerificationToken.updateMany({
     where: { id: token.id, usedAt: null, expiresAt: { gt: new Date() } },
     data: { usedAt: new Date() },
   });
   if (consumed.count !== 1) {
-    redirect(`/login?error=${encodeURIComponent("That setup link is invalid or has expired. Log in to request a new one.")}`);
+    redirect(flashUrl("/login", "error", "setup_link_invalid"));
   }
   const passwordHash = await hashPassword(password);
   await prisma.session.deleteMany({ where: { userId: token.userId } });
@@ -143,7 +143,7 @@ export async function completeSignupAction(formData: FormData) {
     where: { id: token.userId },
     data: { name, passwordHash, emailVerifiedAt: new Date(), isPlaceholder: false },
   });
-  redirect(`/login?notice=${encodeURIComponent("Your account is ready — log in with your new password.")}`);
+  redirect(flashUrl("/login", "notice", "account_ready"));
 }
 
 function signinContext(userAgent: string, geo: { city: string; region: string; country: string }, ip: string): SigninContext {
@@ -160,12 +160,12 @@ export async function loginAction(formData: FormData) {
   // the per-email lockout. Both answer with the same generic error.
   if (await checkLoginIpThrottle(ip)) {
     await recordAttempt("login", email, ip, false);
-    backTo("/login", GENERIC_LOGIN_ERROR);
+    backTo("/login", "invalid_credentials");
   }
   // Lockout check BEFORE credential verification; the error stays generic so
   // the caller can't tell lockout apart from a wrong password.
   if (await checkLoginLockout(email)) {
-    backTo("/login", GENERIC_LOGIN_ERROR);
+    backTo("/login", "invalid_credentials");
   }
   const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
   // Placeholder accounts have no password and cannot log in until claimed.
@@ -176,12 +176,12 @@ export async function loginAction(formData: FormData) {
     : await verifyPassword(password, DUMMY_PASSWORD_HASH).then(() => false);
   if (!user || !ok) {
     await recordAttempt("login", email, ip, false);
-    backTo("/login", GENERIC_LOGIN_ERROR);
+    backTo("/login", "invalid_credentials");
   }
   // Password is correct at this point — only NOW may we reveal that the
   // account is unverified (revealing it earlier would be an oracle).
   if (!user.emailVerifiedAt) {
-    redirect(`/login?error=${encodeURIComponent("Your email address isn't verified yet. We emailed you a verification link — click it, then log in. You can request a new link below.")}&unverified=1`);
+    redirect(flashUrl("/login", "error", "unverified", "&unverified=1"));
   }
   await recordAttempt("login", email, ip, true); // success clears the failure counter
   // --- Device gate ---------------------------------------------------------
@@ -211,7 +211,7 @@ export async function loginAction(formData: FormData) {
     redirect("/dashboard");
   }
   if ((await checkEmailSendThrottle("device_code", email)) || (await checkEmailSendIpThrottle("device_code", ip))) {
-    backTo("/login", GENERIC_LOGIN_ERROR);
+    backTo("/login", "invalid_credentials");
   }
   await prisma.loginChallenge.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } });
   const code = generateLoginCode();
@@ -229,7 +229,7 @@ export async function loginAction(formData: FormData) {
     html: deviceCodeEmailHtml(code, signinContext(ua, geo, ip)),
   });
   if (!sent.ok) {
-    backTo("/login", "We couldn't email your sign-in code right now. Please try again in a few minutes.");
+    backTo("/login", "code_send_failed");
   }
   await recordAttempt("device_code", email, ip, true);
   (await cookies()).set(DEVICE_CHALLENGE_COOKIE, challenge.id, {
@@ -250,7 +250,7 @@ export async function verifyDeviceAction(formData: FormData) {
   const challengeId = store.get(DEVICE_CHALLENGE_COOKIE)?.value;
   const code = String(formData.get("code") ?? "");
   const trust = formData.get("trust") !== null;
-  const expired = `/login?error=${encodeURIComponent("That sign-in code is invalid or has expired. Please log in again.")}`;
+  const expired = flashUrl("/login", "error", "signin_code_invalid");
   if (!challengeId) redirect(expired);
   const challenge = await prisma.loginChallenge
     .findUnique({ where: { id: challengeId }, include: { user: true } })
@@ -261,7 +261,7 @@ export async function verifyDeviceAction(formData: FormData) {
   }
   if (!loginCodeMatches(code, challenge.codeHash)) {
     await prisma.loginChallenge.update({ where: { id: challenge.id }, data: { attempts: { increment: 1 } } });
-    redirect(`/verify-device?error=${encodeURIComponent("That code doesn't match. Check the email and try again.")}`);
+    redirect(flashUrl("/verify-device", "error", "code_mismatch"));
   }
   const consumed = await prisma.loginChallenge.updateMany({
     where: { id: challenge.id, usedAt: null },
@@ -294,7 +294,7 @@ export async function revokeTrustedDeviceAction(formData: FormData) {
   const me = await requireUser();
   const deviceId = String(formData.get("deviceId") ?? "");
   await prisma.trustedDevice.deleteMany({ where: { id: deviceId, userId: me.id } });
-  redirect(`/settings?notice=${encodeURIComponent("Device removed. It will need a sign-in code next time it logs in.")}`);
+  redirect(flashUrl("/settings", "notice", "device_removed"));
 }
 
 /** Resend the verification email. ALWAYS answers generically (no hint
@@ -303,7 +303,7 @@ export async function resendVerificationAction(formData: FormData) {
   const hdrs = await headers();
   const ip = clientIp(hdrs);
   const email = normalizeEmail(String(formData.get("email") ?? ""));
-  const generic = `/login?notice=${encodeURIComponent("If an unverified account exists for that email, a new verification link is on its way.")}`;
+  const generic = flashUrl("/login", "notice", "resend_generic");
   if (isValidEmail(email) && !(await checkEmailSendThrottle("verify_resend", email)) && !(await checkEmailSendIpThrottle("verify_resend", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
     if (user && !user.emailVerifiedAt && !user.isPlaceholder) {
@@ -319,7 +319,7 @@ export async function forgotPasswordAction(formData: FormData) {
   const hdrs = await headers();
   const ip = clientIp(hdrs);
   const email = normalizeEmail(String(formData.get("email") ?? ""));
-  const generic = `/forgot-password?notice=${encodeURIComponent("If an account exists for that email, a password reset link is on its way.")}`;
+  const generic = flashUrl("/forgot-password", "notice", "reset_generic");
   if (isValidEmail(email) && !(await checkEmailSendThrottle("password_reset", email)) && !(await checkEmailSendIpThrottle("password_reset", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
     if (user && !user.isPlaceholder) {
@@ -339,11 +339,11 @@ export async function resetPasswordAction(formData: FormData) {
     ? await prisma.passwordResetToken.findUnique({ where: { tokenHash: hashToken(raw) } }).catch(() => null)
     : null;
   if (tokenState(token) !== "valid" || !token) {
-    redirect(`/reset-password?error=${encodeURIComponent("That reset link is invalid or has expired. Request a new one.")}`);
+    redirect(flashUrl("/reset-password", "error", "reset_link_invalid"));
   }
   const pwError = validateNewPassword(password);
   if (pwError) {
-    redirect(`/reset-password?token=${encodeURIComponent(raw)}&error=${encodeURIComponent(pwError)}`);
+    redirect(flashUrl(`/reset-password?token=${encodeURIComponent(raw)}`, "error", passwordFlashCode(pwError)));
   }
   // Consume ATOMICALLY (F9): only the request that flips usedAt from null
   // proceeds; a concurrent replay loses the race and changes nothing.
@@ -352,7 +352,7 @@ export async function resetPasswordAction(formData: FormData) {
     data: { usedAt: new Date() },
   });
   if (consumed.count !== 1) {
-    redirect(`/reset-password?error=${encodeURIComponent("That reset link is invalid or has expired. Request a new one.")}`);
+    redirect(flashUrl("/reset-password", "error", "reset_link_invalid"));
   }
   const passwordHash = await hashPassword(password);
   await prisma.user.update({
@@ -361,7 +361,7 @@ export async function resetPasswordAction(formData: FormData) {
     data: { passwordHash, emailVerifiedAt: new Date(), isPlaceholder: false },
   });
   await prisma.session.deleteMany({ where: { userId: token.userId } }); // revoke ALL sessions
-  redirect(`/login?notice=${encodeURIComponent("Password updated. Please log in with your new password.")}`);
+  redirect(flashUrl("/login", "notice", "password_updated"));
 }
 
 export async function logoutAction() {
@@ -375,10 +375,10 @@ export async function changePasswordAction(formData: FormData) {
   const current = String(formData.get("currentPassword") ?? "");
   const next = String(formData.get("newPassword") ?? "");
   const ok = await verifyPassword(current, me.passwordHash);
-  if (!ok) redirect(`/settings?error=${encodeURIComponent("Current password is incorrect.")}`);
+  if (!ok) redirect(flashUrl("/settings", "error", "current_password_wrong"));
   const nextError = validateNewPassword(next);
   if (nextError) {
-    redirect(`/settings?error=${encodeURIComponent(nextError.replace(/^Password/, "New password"))}`);
+    redirect(flashUrl("/settings", "error", passwordFlashCode(nextError, "new_pw")));
   }
   const passwordHash = await hashPassword(next);
   await prisma.user.update({ where: { id: me.id }, data: { passwordHash } });
@@ -387,7 +387,7 @@ export async function changePasswordAction(formData: FormData) {
   await prisma.session.deleteMany({
     where: { userId: me.id, ...(token ? { NOT: { tokenHash: hashToken(token) } } : {}) },
   });
-  redirect(`/settings?notice=${encodeURIComponent("Password changed. Your other sessions were signed out.")}`);
+  redirect(flashUrl("/settings", "notice", "password_changed"));
 }
 
 /** Used by /login and /signup pages to bounce already-authenticated users. */

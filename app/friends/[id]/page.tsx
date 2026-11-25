@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { flashText } from "@/lib/flash";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -58,7 +59,7 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
         </div>
         <Link href={`/expenses/new?friend=${friend.id}`}><Button>+ Add expense</Button></Link>
       </div>
-      {notice && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{notice}</div>}
+      {flashText(notice, "notice") && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{flashText(notice, "notice")}</div>}
 
       <Card className="flex flex-wrap items-center gap-3">
         <div className="flex-1">

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { flashText } from "@/lib/flash";
 import { prisma } from "@/lib/db";
 import { hashToken } from "@/lib/auth-utils";
 import { tokenState } from "@/lib/tokens";
@@ -19,14 +20,14 @@ export default async function ResetPasswordPage({ searchParams }: { searchParams
         {!valid ? (
           <>
             <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {sp.error ?? "That reset link is invalid or has expired."}
+              {flashText(sp.error, "error") ?? "That reset link is invalid or has expired."}
             </div>
             <p className="text-sm text-neutral-500">Request a fresh one from the <Link href="/forgot-password" className="font-semibold text-brand hover:underline">forgot password</Link> page.</p>
           </>
         ) : (
           <>
             <p className="mb-4 text-sm text-neutral-500">Choose a new password (at least 10 characters). This signs out all your sessions.</p>
-            {sp.error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</div>}
+            {flashText(sp.error, "error") && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(sp.error, "error")}</div>}
             <form action={resetPasswordAction} className="space-y-3">
               <input type="hidden" name="token" value={sp.token} />
               <div><Label htmlFor="password">New password</Label><Input id="password" name="password" type="password" required minLength={10} autoComplete="new-password" /></div>

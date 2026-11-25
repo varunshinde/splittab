@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { flashText } from "@/lib/flash";
 import { requireUser } from "@/lib/auth";
 import { getFriends, getMyGroups } from "@/lib/data";
 import { describeDevice, deviceHashFor, locationLabel } from "@/lib/device";
@@ -23,8 +24,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Settings</h1>
-      {sp.notice && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{sp.notice}</div>}
-      {sp.error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</div>}
+      {flashText(sp.notice, "notice") && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{flashText(sp.notice, "notice")}</div>}
+      {flashText(sp.error, "error") && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(sp.error, "error")}</div>}
 
       <Card>
         <div className="mb-3 flex items-center gap-3">

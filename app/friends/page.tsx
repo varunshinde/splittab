@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { flashText } from "@/lib/flash";
 import { requireUser } from "@/lib/auth";
 import { getBlockedUsers, getFriendRequests, getFriends, getMyExpenses, getMySettlements } from "@/lib/data";
 import { pairwiseNets } from "@/lib/balances";
@@ -28,8 +29,8 @@ export default async function FriendsPage({ searchParams }: { searchParams: Prom
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-bold">Friends</h1>
-      {sp.error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</div>}
-      {sp.notice && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{sp.notice}</div>}
+      {flashText(sp.error, "error") && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(sp.error, "error")}</div>}
+      {flashText(sp.notice, "notice") && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{flashText(sp.notice, "notice")}</div>}
 
       <Card>
         <h2 className="mb-1 font-semibold">Add a friend by email</h2>

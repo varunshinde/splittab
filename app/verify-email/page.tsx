@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { flashText } from "@/lib/flash";
 import { prisma } from "@/lib/db";
 import { hashToken } from "@/lib/auth-utils";
 import { tokenState } from "@/lib/tokens";
@@ -41,7 +42,7 @@ export default async function VerifyEmailPage({
         <p className="mb-4 text-sm text-neutral-500">
           Your email is confirmed. Choose a password to finish creating your SplitTab account.
         </p>
-        {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        {flashText(error, "error") && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(error, "error")}</div>}
         <form action={completeSignupAction} className="space-y-3">
           <input type="hidden" name="token" value={raw} />
           <div><Label htmlFor="name">Your name</Label><Input id="name" name="name" required autoComplete="name" defaultValue={token.user.name} /></div>

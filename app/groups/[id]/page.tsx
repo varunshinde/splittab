@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { flashText } from "@/lib/flash";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getMyGroup } from "@/lib/data";
@@ -61,8 +62,8 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
         </div>
         <Link href={`/expenses/new`}><Button>+ Add expense</Button></Link>
       </div>
-      {sp.notice && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{sp.notice}</div>}
-      {sp.error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</div>}
+      {flashText(sp.notice, "notice") && <div className="rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{flashText(sp.notice, "notice")}</div>}
+      {flashText(sp.error, "error") && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(sp.error, "error")}</div>}
 
       <nav className="flex flex-wrap gap-1.5">
         {tabs.map((t) => (

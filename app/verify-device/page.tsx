@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { flashText } from "@/lib/flash";
 import { cookies } from "next/headers";
 import { DEVICE_CHALLENGE_COOKIE } from "@/lib/device";
 import { verifyDeviceAction } from "../auth-actions";
@@ -33,7 +34,7 @@ export default async function VerifyDevicePage({ searchParams }: { searchParams:
           This device isn&apos;t trusted yet, so we emailed a 6-digit sign-in code to your address.
           It expires in 10 minutes.
         </p>
-        {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        {flashText(error, "error") && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(error, "error")}</div>}
         <form action={verifyDeviceAction} className="space-y-3">
           <div>
             <Label htmlFor="code">Sign-in code</Label>

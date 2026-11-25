@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { flashText } from "@/lib/flash";
 import { getFriends, getMyGroups } from "@/lib/data";
 import { AddExpenseForm } from "@/components/AddExpenseForm";
 import { Card } from "@/components/ui/ui";
@@ -11,7 +12,7 @@ export default async function NewExpensePage({ searchParams }: { searchParams: P
   return (
     <div className="mx-auto max-w-xl space-y-4">
       <h1 className="text-2xl font-bold">Add an expense</h1>
-      {sp.error && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</div>}
+      {flashText(sp.error, "error") && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(sp.error, "error")}</div>}
       <Card className="p-5">
         <AddExpenseForm
           me={{ id: me.id, name: me.name, email: me.email }}

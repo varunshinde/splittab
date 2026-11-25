@@ -11,6 +11,7 @@ import { storage } from "@/lib/storage";
 import { ocrReceipt } from "@/lib/ocr";
 import { decideAddFriend, isValidEmail, normalizeEmail, normalizePair } from "@/lib/friends";
 import { checkActionThrottle, clientIp, recordAction } from "@/lib/ratelimit";
+import { flashUrl } from "@/lib/flash";
 import { areFriends, findFriendship, getMyExpense, resolveUserByEmail } from "@/lib/data";
 import {
   assertValidUpload, capString, parseAmountCents, parseCurrency, parseDate, requireString, safeBackPath,
@@ -53,7 +54,7 @@ async function blockedBy(userId: string, otherId: string): Promise<boolean> {
 export async function addFriendForm(formData: FormData) {
   const me = await requireUser();
   if (await checkActionThrottle("friend_add", me.email)) {
-    redirect(`/friends?error=${encodeURIComponent("You're adding friends too quickly. Please wait a while and try again.")}`);
+    redirect(flashUrl("/friends", "error", "friend_add_throttled"));
   }
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const existing = await prisma.user.findUnique({ where: { email } }).catch(() => null);
@@ -65,20 +66,20 @@ export async function addFriendForm(formData: FormData) {
     existingUser: existing ? { id: existing.id, email: existing.email, isPlaceholder: existing.isPlaceholder } : null,
     friendship: friendship ? { status: friendship.status, requestedById: friendship.requestedById } : null,
   });
-  if (decision.kind === "invalid-email") redirect(`/friends?error=${encodeURIComponent("Please enter a valid email address.")}`);
-  if (decision.kind === "self") redirect(`/friends?error=${encodeURIComponent("That's your own email address.")}`);
-  if (decision.kind === "already-friends") redirect(`/friends?notice=${encodeURIComponent("You are already friends with this person.")}`);
+  if (decision.kind === "invalid-email") redirect(flashUrl("/friends", "error", "invalid_email"));
+  if (decision.kind === "self") redirect(flashUrl("/friends", "error", "own_email"));
+  if (decision.kind === "already-friends") redirect(flashUrl("/friends", "notice", "already_friends"));
   if (decision.kind === "accept-theirs") {
     await prisma.friendship.update({ where: { id: friendship!.id }, data: { status: "ACCEPTED" } });
     await recordAction("friend_add", me.email, clientIp(await headers()));
     revalidatePath("/friends");
-    redirect(`/friends?notice=${encodeURIComponent("Friend request accepted — you are now friends.")}`);
+    redirect(flashUrl("/friends", "notice", "friend_request_accepted"));
   }
   // F1 + F3: sending a request. The outcome message is IDENTICAL whether
   // the target is a registered user, a brand-new placeholder, an already
   // pending request, or a pair with a block (which silently no-ops) — the
   // response never reveals which case it was.
-  const sent = `/friends?notice=${encodeURIComponent("Friend request sent. When they accept, you'll be able to split expenses together.")}`;
+  const sent = flashUrl("/friends", "notice", "friend_request_sent");
   if (decision.kind === "blocked" || decision.kind === "already-requested") {
     redirect(sent);
   }
@@ -206,11 +207,11 @@ export async function addGroupMemberForm(formData: FormData) {
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
   if (!membership) throw new Error("you are not a member of this group");
-  if (!isValidEmail(email) || email === normalizeEmail(me.email)) redirect(`/groups/${groupId}?tab=members&error=${encodeURIComponent("Enter someone else's valid email.")}`);
+  if (!isValidEmail(email) || email === normalizeEmail(me.email)) redirect(flashUrl(`/groups/${groupId}?tab=members`, "error", "member_email_invalid"));
   const { user } = await resolveUserByEmail(email);
   if (await blockedBy(me.id, user.id)) {
     // They blocked me: silently do nothing, same outward response (F1).
-    redirect(`/groups/${groupId}?tab=members&notice=${encodeURIComponent("Member added.")}`);
+    redirect(flashUrl(`/groups/${groupId}?tab=members`, "notice", "member_added"));
   }
   await prisma.groupMember.upsert({
     where: { userId_groupId: { userId: user.id, groupId } },
@@ -224,7 +225,7 @@ export async function addGroupMemberForm(formData: FormData) {
   // Non-revealing response (F3): don't confirm the real name behind an
   // arbitrary email to the person adding it. (Co-members see names in the
   // members list by design — that's different from an email->name oracle.)
-  redirect(`/groups/${groupId}?tab=members&notice=${encodeURIComponent("Member added.")}`);
+  redirect(flashUrl(`/groups/${groupId}?tab=members`, "notice", "member_added"));
 }
 
 /** Leave a group (F1): removes my membership. My past expenses stay as
@@ -302,7 +303,7 @@ export async function addExpenseForm(formData: FormData) {
   const paidById = String(formData.get("paidById") ?? me.id);
   const participantIds = [...new Set(formData.getAll("participantIds").map(String))];
   if (participantIds.length === 0) {
-    redirect(`/expenses/new?error=${encodeURIComponent("Pick at least one person to split with.")}`);
+    redirect(flashUrl("/expenses/new", "error", "pick_participant"));
   }
   const expense = await createExpense(me.id, {
     groupId,
@@ -492,13 +493,13 @@ export async function settleFriendForm(formData: FormData) {
   const net = netBetween(me.id, friendId, expenses, settlements);
   const provided = formData.get("amount");
   const amountInCents = provided ? parseAmountToCents(provided) : Math.abs(net);
-  if (amountInCents <= 0) redirect(`/friends/${friendId}?notice=${encodeURIComponent("You are already settled up.")}`);
+  if (amountInCents <= 0) redirect(flashUrl(`/friends/${friendId}`, "notice", "already_settled"));
   const fromUserId = net > 0 ? friendId : me.id;
   const toUserId = net > 0 ? me.id : friendId;
   await prisma.settlement.create({ data: { fromUserId, toUserId, amountInCents, groupId: null } });
   await prisma.activity.create({ data: { groupId: null, userId: me.id, type: "settlement", message: "Settlement recorded with a friend" } });
   revalidatePath("/dashboard");
-  redirect(`/friends/${friendId}?notice=${encodeURIComponent("Settlement recorded.")}`);
+  redirect(flashUrl(`/friends/${friendId}`, "notice", "settlement_recorded"));
 }
 
 // --- Pro / settings / export ------------------------------------------------
@@ -537,7 +538,7 @@ export async function updateProfileForm(formData: FormData) {
   const defaultCurrency = parseCurrency(formData.get("defaultCurrency"));
   await prisma.user.update({ where: { id: me.id }, data: { name, defaultCurrency } });
   revalidatePath("/settings");
-  redirect("/settings?notice=" + encodeURIComponent("Profile updated."));
+  redirect(flashUrl("/settings", "notice", "profile_updated"));
 }
 
 /** Full JSON export of the SESSION user's data. */

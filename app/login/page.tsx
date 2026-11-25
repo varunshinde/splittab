@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { flashText } from "@/lib/flash";
 import { redirectIfAuthed, loginAction, resendVerificationAction } from "../auth-actions";
 import { Button, Card, Input, Label } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
@@ -11,8 +12,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <Card className="p-6">
         <h1 className="mb-1 text-2xl font-bold">Welcome back</h1>
         <p className="mb-4 text-sm text-neutral-500">Log in to your SplitTab account.</p>
-        {sp.notice && <div className="mb-3 rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{sp.notice}</div>}
-        {sp.error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</div>}
+        {flashText(sp.notice, "notice") && <div className="mb-3 rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{flashText(sp.notice, "notice")}</div>}
+        {flashText(sp.error, "error") && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{flashText(sp.error, "error")}</div>}
         <form action={loginAction} className="space-y-3">
           <div><Label htmlFor="email">Email address</Label><Input id="email" name="email" type="email" required autoComplete="email" placeholder="you@example.com" /></div>
           <div><Label htmlFor="password">Password</Label><Input id="password" name="password" type="password" required autoComplete="current-password" /></div>
