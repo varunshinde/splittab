@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock @vercel/blob — no real network calls to Vercel in tests.
-vi.mock("@vercel/blob", () => ({ put: vi.fn(), del: vi.fn() }));
+vi.mock("@vercel/blob", () => ({ put: vi.fn(), del: vi.fn(), get: vi.fn() }));
 import { put, del } from "@vercel/blob";
 import {
   getStorageProvider,
@@ -37,7 +37,7 @@ describe("storage provider selection", () => {
 });
 
 describe("VercelBlobStorageProvider (mocked)", () => {
-  it("save() uploads publicly and returns the blob URL + byte size", async () => {
+  it("save() uploads PRIVATELY and returns the blob URL + byte size", async () => {
     const provider = new VercelBlobStorageProvider("dummy-token");
     const data = Buffer.from("fake-png-bytes");
     const saved = await provider.save("my receipt.png", data);
@@ -47,7 +47,7 @@ describe("VercelBlobStorageProvider (mocked)", () => {
     const [pathname, body, options] = mockPut.mock.calls[0];
     expect(pathname).toMatch(/^receipts\/\d+-my_receipt\.png$/);
     expect(body).toBe(data);
-    expect(options).toMatchObject({ access: "public", token: "dummy-token" });
+    expect(options).toMatchObject({ access: "private", token: "dummy-token" });
   });
   it("remove() deletes blob URLs and is a no-op for local paths", async () => {
     const provider = new VercelBlobStorageProvider("dummy-token");

@@ -6,7 +6,6 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { computeSplit } from "@/lib/splits";
 import { netBetween } from "@/lib/balances";
-import { convertCurrency, STATIC_RATES } from "@/lib/currency";
 import { assertCanUpload, canGrantTripPass, tripPassExpiry } from "@/lib/pro";
 import { storage } from "@/lib/storage";
 import { ocrReceipt } from "@/lib/ocr";
@@ -402,40 +401,33 @@ export async function addItemForm(formData: FormData) {
 
 /** Upload a receipt at full resolution via the StorageProvider; enforces the
  *  per-user quota. Identity = session user; expense must be one of mine.
- *  Only image/PDF mime types, hard 10MB per-file cap (see lib/validate). */
+ *  Type is verified against the file's magic bytes (F7), storage is private,
+ *  quota updates are atomic increments, and replacing a receipt deletes the
+ *  old file and credits its bytes back. */
 export async function uploadReceipt(expenseId: string, fileName: string, data: Buffer, mimeType?: string) {
   const me = await requireUser();
   const expense = await getMyExpense(me.id, expenseId);
   if (!expense) throw new Error("expense not found");
-  assertValidUpload(fileName, data.byteLength, mimeType);
+  assertValidUpload(fileName, data, mimeType);
   assertCanUpload(me.receiptStorageUsedBytes, BigInt(data.byteLength), me.receiptStorageQuotaBytes);
   const saved = await storage.save(fileName, data);
   const receipt = await prisma.receipt.create({ data: { filePath: saved.filePath, fileSizeBytes: saved.fileSizeBytes } });
+  const old = expense.receipt;
   await prisma.expense.update({ where: { id: expenseId }, data: { receiptId: receipt.id } });
-  await prisma.user.update({ where: { id: me.id }, data: { receiptStorageUsedBytes: me.receiptStorageUsedBytes + saved.fileSizeBytes } });
+  await prisma.user.update({
+    where: { id: me.id },
+    data: { receiptStorageUsedBytes: { increment: saved.fileSizeBytes } },
+  });
+  if (old) {
+    await storage.remove(old.filePath).catch(() => {});
+    await prisma.receipt.delete({ where: { id: old.id } }).catch(() => {});
+    await prisma.user.update({
+      where: { id: me.id },
+      data: { receiptStorageUsedBytes: { decrement: old.fileSizeBytes } },
+    }).catch(() => {});
+  }
   await ocrReceipt(saved.filePath); // stub: returns [] for manual itemization
   return receipt;
-}
-
-/** CSV import stub — no live bank API. Parses "description,amountInCents,paidById" rows. */
-export async function importTransactions(groupId: string, csv: string) {
-  const me = await requireUser();
-  const members = await prisma.groupMember.findMany({ where: { groupId } });
-  if (!members.some((m) => m.userId === me.id)) throw new Error("you are not a member of this group");
-  const memberIds = new Set(members.map((m) => m.userId));
-  const rows = csv.trim().split("\n").slice(1).filter(Boolean);
-  let created = 0;
-  for (const row of rows) {
-    const [description, amount, paidById] = row.split(",").map((s) => s.trim());
-    if (!memberIds.has(paidById)) continue;
-    await createExpense(me.id, {
-      groupId, description, amountInCents: parseInt(amount, 10), currency: "USD",
-      paidById, category: "General", date: new Date(), notes: null,
-      participantIds: members.map((m) => m.userId),
-    });
-    created += 1;
-  }
-  return { created };
 }
 
 // --- Settlements -----------------------------------------------------------
@@ -564,11 +556,4 @@ export async function exportData() {
   });
   const { passwordHash: _omit, ...safe } = data;
   return JSON.parse(JSON.stringify(safe, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
-}
-
-export async function convertCurrencyAction(amountInCents: number, from: string, to: string) {
-  await requireUser();
-  const rates = await prisma.currencyRate.findMany().catch(() => []);
-  const table = rates.length ? Object.fromEntries(rates.map((r) => [`${r.fromCurrency}->${r.toCurrency}`, r.rateScaled])) : STATIC_RATES;
-  return convertCurrency(amountInCents, from, to, table);
 }

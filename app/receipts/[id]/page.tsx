@@ -14,9 +14,6 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   const expense = await getMyExpense(me.id, id).catch(() => null);
   if (!expense) notFound();
   const suggested = expense.receipt ? await ocrReceipt(expense.receipt.filePath) : [];
-  // Receipt.filePath is an https URL with Vercel Blob (production) or a local
-  // filesystem path in dev — render URLs directly, show paths as text.
-  const receiptIsUrl = expense.receipt ? /^https?:\/\//.test(expense.receipt.filePath) : false;
   const participants = new Map<string, string>();
   participants.set(expense.paidBy.id, expense.paidBy.name);
   for (const s of expense.splits) participants.set(s.user.id, s.user.name);
@@ -25,8 +22,8 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
       <h1 className="text-2xl font-bold">Receipt — {expense.description}</h1>
       {expense.receipt ? (
         <p className="text-sm text-neutral-500">
-          {receiptIsUrl ? <a className="font-medium text-brand underline" href={expense.receipt.filePath} target="_blank" rel="noreferrer">View receipt image</a> : expense.receipt.filePath}
-          {" "}· {expense.receipt.fileSizeBytes.toString()} bytes · uploaded {expense.receipt.uploadedAt.toISOString().slice(0, 10)} (full resolution, {receiptIsUrl ? "Vercel Blob storage" : "local storage"})
+          <a className="font-medium text-brand underline" href={`/api/receipts/${expense.receipt.id}`} target="_blank" rel="noreferrer">View receipt image</a>
+          {" "}· {expense.receipt.fileSizeBytes.toString()} bytes · uploaded {expense.receipt.uploadedAt.toISOString().slice(0, 10)} (full resolution, private — only expense participants can open it)
         </p>
       ) : (
         <p className="text-sm text-neutral-500">No receipt uploaded for this expense yet.</p>

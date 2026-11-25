@@ -121,13 +121,20 @@ describe("input validation", () => {
     expect(parseDate("2026-02-03").toISOString().slice(0, 10)).toBe("2026-02-03");
     expect(() => parseDate("not-a-date")).toThrow();
   });
-  it("uploads: image/pdf only, extension must match, 10MB cap", () => {
-    expect(() => assertValidUpload("a.png", 1000, "image/png")).not.toThrow();
-    expect(() => assertValidUpload("a.pdf", 1000, "application/pdf")).not.toThrow();
-    expect(() => assertValidUpload("a.exe", 1000, "application/x-msdownload")).toThrow(/image or PDF/);
-    expect(() => assertValidUpload("a.png", 1000, "application/pdf")).toThrow(/extension/);
-    expect(() => assertValidUpload("a.png", 11 * 1024 * 1024, "image/png")).toThrow(/10MB/);
-    expect(() => assertValidUpload("a.png", 0, "image/png")).toThrow(/empty/);
+  it("uploads: type + extension + magic bytes must all agree (F7)", () => {
+    const pngBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100)]);
+    const pdfBytes = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(100)]);
+    expect(() => assertValidUpload("a.png", pngBytes, "image/png")).not.toThrow();
+    expect(() => assertValidUpload("a.pdf", pdfBytes, "application/pdf")).not.toThrow();
+    expect(() => assertValidUpload("a.exe", pngBytes, "application/x-msdownload")).toThrow(/image or PDF/);
+    expect(() => assertValidUpload("a.png", pngBytes, "application/pdf")).toThrow(/extension/);
+    expect(() => assertValidUpload("a.png", Buffer.alloc(11 * 1024 * 1024, 0x89), "image/png")).toThrow(/10MB/);
+    expect(() => assertValidUpload("a.png", Buffer.alloc(0), "image/png")).toThrow(/empty/);
+    // The F7 bypass: no declared type at all is now rejected...
+    expect(() => assertValidUpload("evil.html", Buffer.from("<html><script>alert(1)</script></html>"))).toThrow(/type is required/);
+    // ...and an HTML file claiming to be a PNG fails the magic-byte sniff.
+    expect(() => assertValidUpload("evil.png", Buffer.from("<html><script>alert(1)</script></html>"), "image/png")).toThrow(/do not match/);
+    expect(() => assertValidUpload("fake.pdf", pngBytes, "application/pdf")).toThrow(/do not match/);
   });
   it("back paths: only same-origin absolute paths survive (open-redirect guard)", () => {
     expect(safeBackPath("/settle")).toBe("/settle");

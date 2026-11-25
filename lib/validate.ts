@@ -75,13 +75,37 @@ export const ALLOWED_RECEIPT_MIME: Record<string, string[]> = {
   "application/pdf": [".pdf"],
 };
 
-export function assertValidUpload(fileName: string, sizeBytes: number, mimeType?: string): void {
+// Magic-byte signatures per allowed type. The client-declared mime type is
+// never trusted on its own (F7): the file's leading bytes must match the
+// type it claims to be, so an HTML file renamed to .png is rejected.
+const MAGIC: Record<string, (d: Buffer) => boolean> = {
+  "image/png": (d) => d.length >= 8 && d[0] === 0x89 && d[1] === 0x50 && d[2] === 0x4e && d[3] === 0x47,
+  "image/jpeg": (d) => d.length >= 3 && d[0] === 0xff && d[1] === 0xd8 && d[2] === 0xff,
+  "image/webp": (d) => d.length >= 12 && d.toString("ascii", 0, 4) === "RIFF" && d.toString("ascii", 8, 12) === "WEBP",
+  "image/gif": (d) => d.length >= 6 && (d.toString("ascii", 0, 6) === "GIF87a" || d.toString("ascii", 0, 6) === "GIF89a"),
+  "application/pdf": (d) => d.length >= 5 && d.toString("ascii", 0, 5) === "%PDF-",
+};
+
+export function sniffReceiptMime(data: Buffer): string | null {
+  for (const [mime, check] of Object.entries(MAGIC)) {
+    if (check(data)) return mime;
+  }
+  return null;
+}
+
+/** Validate a receipt upload: size cap, a DECLARED type is required, the
+ *  extension must match it, and the file bytes must actually be that type. */
+export function assertValidUpload(fileName: string, data: Buffer, mimeType?: string): void {
+  const sizeBytes = data.byteLength;
   if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) throw new Error("empty file");
   if (sizeBytes > MAX_RECEIPT_BYTES) throw new Error(`file exceeds the ${MAX_RECEIPT_BYTES / (1024 * 1024)}MB limit`);
-  if (mimeType) {
-    const exts = ALLOWED_RECEIPT_MIME[mimeType];
-    if (!exts) throw new Error("only image or PDF receipts are allowed");
-    const lower = fileName.toLowerCase();
-    if (!exts.some((e) => lower.endsWith(e))) throw new Error("file extension does not match its type");
+  if (!mimeType) throw new Error("a file type is required");
+  const exts = ALLOWED_RECEIPT_MIME[mimeType];
+  if (!exts) throw new Error("only image or PDF receipts are allowed");
+  const lower = fileName.toLowerCase();
+  if (!exts.some((e) => lower.endsWith(e))) throw new Error("file extension does not match its type");
+  const sniffed = sniffReceiptMime(data);
+  if (sniffed !== mimeType) {
+    throw new Error(`file contents do not match its declared type (${mimeType})`);
   }
 }
