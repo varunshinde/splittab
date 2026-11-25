@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "SplitTab", description: "SplitTab â€
 function Logo() {
   return (
     <Link href="/dashboard" className="flex items-center gap-2 text-lg font-bold tracking-tight text-ink">
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-base font-black text-white">S</span>
+      <img src="/logo-mark.svg" alt="" className="h-8 w-8" />
       SplitTab
     </Link>
   );

@@ -10,6 +10,7 @@ export default async function Home() {
   return (
     <div className="mx-auto max-w-3xl space-y-8 py-10 text-center">
       <div className="space-y-3">
+        <img src="/logo-mark.svg" alt="SplitTab logo" className="mx-auto h-20 w-20" />
         <h1 className="text-4xl font-black tracking-tight">Split expenses, <span className="text-brand">without the awkward math.</span></h1>
         <p className="mx-auto max-w-xl text-neutral-600">
           SplitTab is a free, open-source way to track shared expenses with friends and groups —

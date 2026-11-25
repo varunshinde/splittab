@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo-mark.svg" alt="SplitTab logo" width="112" />
+
 # SplitTab
 
 **An open-source Splitwise clone — real accounts, friends by email, groups, and settle-up.**

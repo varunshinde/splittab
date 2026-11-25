@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640">
+  <rect width="1280" height="640" fill="#F7F7F7"/>
+  <g transform="translate(490,52) scale(4.6875)">
+    <rect x="4" y="4" width="56" height="56" rx="15" fill="#1CC29F"/>
+    <defs>
+      <clipPath id="tab">
+        <path d="M21 15 H43 V45 L40.25 49 L37.5 45 L34.75 49 L32 45 L29.25 49 L26.5 45 L23.75 49 L21 45 Z"/>
+      </clipPath>
+    </defs>
+    <g clip-path="url(#tab)">
+      <rect x="21" y="15" width="22" height="34" fill="#FFFFFF"/>
+      <rect x="32" y="15" width="11" height="34" fill="#DDF3ED"/>
+    </g>
+    <g stroke="#1CC29F" stroke-width="2.2" stroke-linecap="round" opacity="0.55">
+      <line x1="24.5" y1="24" x2="29.3" y2="24"/>
+      <line x1="24.5" y1="30.5" x2="29.3" y2="30.5"/>
+      <line x1="34.7" y1="24" x2="39.5" y2="24"/>
+      <line x1="34.7" y1="30.5" x2="39.5" y2="30.5"/>
+    </g>
+    <line x1="32" y1="19" x2="32" y2="41" stroke="#1CC29F" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="0.1 5.4"/>
+  </g>
+  <text x="640" y="478" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="96" font-weight="bold" fill="#2E2E2E">Split<tspan fill="#1CC29F">Tab</tspan></text>
+  <text x="640" y="540" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="34" fill="#737373">Split expenses with friends and groups</text>
+</svg>
