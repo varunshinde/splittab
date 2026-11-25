@@ -28,10 +28,18 @@ npm run dev                   # http://localhost:3000
 
 Open the app, **select a user** on the home page (MVP session — a cookie, no passwords/OAuth by design), then use Groups / Search / Settings.
 
+## Receipt storage
+
+Receipt **images** are files; receipt **metadata** (owning expense, file size, upload time, itemization) is always stored in Postgres (`Receipt` row).
+
+- **Production (Vercel):** images go to [Vercel Blob](https://vercel.com/docs/vercel-blob) at full resolution via `VercelBlobStorageProvider` (`lib/storage.ts`). It activates automatically when `BLOB_READ_WRITE_TOKEN` is set (create a Blob store in the Vercel dashboard — never commit a real token). `Receipt.filePath` then holds the blob's public https URL, and the receipt page links to it directly.
+- **Local dev / Docker:** with no token set, uploads fall back to `LocalStorageProvider` writing under `public/uploads`, unchanged from before.
+- The per-user storage quota (default 10 GiB) is enforced on upload in both modes, based on the uploaded byte size.
+
 ### Tests (the “grill” suite)
 
 ```bash
-npm test   # vitest — settlement edge cases, split validation, currency round-trip, Trip Pass expiry, quota
+npm test   # vitest — settlement edge cases, split validation, currency round-trip, Trip Pass expiry, quota, storage provider selection (Blob mocked)
 ```
 
 ## Routes
@@ -57,7 +65,7 @@ npm test   # vitest — settlement edge cases, split validation, currency round-
 | Charts & graphs (time + category, per group) | ✅ Implemented (Recharts) |
 | Full expense search | ✅ Implemented |
 | Currency conversion | 🟡 **Static rate table stub** — scaled-integer math, pluggable provider interface, TODO for Open Exchange Rates; rates also seeded into `CurrencyRate` |
-| High-res receipt cloud storage | 🟡 **Local provider** — full-resolution files under `public/uploads` behind a `StorageProvider` interface (swap in S3); 10 GiB per-user quota enforced via `receiptStorageUsedBytes` |
+| High-res receipt cloud storage | ✅ **Vercel Blob in production** — full-resolution images behind a `StorageProvider` interface; local filesystem (`public/uploads`) fallback for dev; 10 GiB per-user quota enforced via `receiptStorageUsedBytes` |
 | Data backup / export | ✅ Implemented (JSON download) |
 | Early-access feature flags | ✅ Implemented (`FeatureFlag` table + `isFeatureEnabled` gate) |
 | Trip Pass (Pro user grants a group 30 days of Pro) | ✅ Implemented (`grantTripPass`, `tripPassExpiry`, `hasProAccess`) |

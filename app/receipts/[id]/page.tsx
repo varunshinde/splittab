@@ -11,8 +11,11 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   const expense = await prisma.expense.findUnique({ where: { id }, include: { receipt: true, items: { include: { assignedTo: true } }, group: { include: { members: { include: { user: true } } } } } }).catch(() => null);
   if (!expense) notFound();
   const suggested = expense.receipt ? await ocrReceipt(expense.receipt.filePath) : [];
+  // Receipt.filePath is an https URL with Vercel Blob (production) or a local
+  // filesystem path in dev — render URLs directly, show paths as text.
+  const receiptIsUrl = expense.receipt ? /^https?:\/\//.test(expense.receipt.filePath) : false;
   return (<div className="space-y-4"><h1 className="text-2xl font-bold">Receipt — {expense.description}</h1>
-    {expense.receipt ? <p className="text-sm text-neutral-500">{expense.receipt.filePath} · {expense.receipt.fileSizeBytes.toString()} bytes · uploaded {expense.receipt.uploadedAt.toISOString().slice(0, 10)} (full resolution, local storage)</p> : <p className="text-sm">No receipt uploaded for this expense yet — upload via the <code>uploadReceipt</code> server action.</p>}
+    {expense.receipt ? <p className="text-sm text-neutral-500">{receiptIsUrl ? <a className="underline" href={expense.receipt.filePath} target="_blank" rel="noreferrer">View receipt image</a> : expense.receipt.filePath} · {expense.receipt.fileSizeBytes.toString()} bytes · uploaded {expense.receipt.uploadedAt.toISOString().slice(0, 10)} (full resolution, {receiptIsUrl ? "Vercel Blob storage" : "local storage"})</p> : <p className="text-sm">No receipt uploaded for this expense yet — upload via the <code>uploadReceipt</code> server action.</p>}
     <p className="text-sm text-neutral-500">OCR suggestions: {suggested.length} (stub — itemize manually below)</p>
     <Card>{expense.items.map((it) => <div key={it.id} className="flex justify-between py-1"><span>{it.description}</span><span>{formatMoney(it.amountInCents, expense.currency)} {it.assignedTo ? `→ ${it.assignedTo.name}` : "(unassigned)"}</span></div>)}</Card>
     <Card><h2 className="mb-2 font-semibold">Add item</h2>
