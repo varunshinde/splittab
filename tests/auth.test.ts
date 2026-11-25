@@ -5,7 +5,7 @@ import {
   MIN_PASSWORD_LENGTH, SESSION_TTL_MS, SESSION_IDLE_MS,
 } from "../lib/auth-utils";
 import { isLockedOut, isSignupThrottled, LOGIN_MAX_FAILURES } from "../lib/ratelimit";
-import { assertValidUpload, parseAmountCents, parseCurrency, parseDate } from "../lib/validate";
+import { assertValidUpload, parseAmountCents, parseCurrency, parseDate, safeBackPath } from "../lib/validate";
 
 describe("password hashing", () => {
   it("hashes with bcrypt $2b$12$ and verifies", async () => {
@@ -106,5 +106,16 @@ describe("input validation", () => {
     expect(() => assertValidUpload("a.png", 1000, "application/pdf")).toThrow(/extension/);
     expect(() => assertValidUpload("a.png", 11 * 1024 * 1024, "image/png")).toThrow(/10MB/);
     expect(() => assertValidUpload("a.png", 0, "image/png")).toThrow(/empty/);
+  });
+  it("back paths: only same-origin absolute paths survive (open-redirect guard)", () => {
+    expect(safeBackPath("/settle")).toBe("/settle");
+    expect(safeBackPath("/groups/abc?tab=settle")).toBe("/groups/abc?tab=settle");
+    expect(safeBackPath("https://evil.com")).toBe("/dashboard");
+    expect(safeBackPath("//evil.com")).toBe("/dashboard");
+    expect(safeBackPath("/\\evil")).toBe("/dashboard");
+    expect(safeBackPath("")).toBe("/dashboard");
+    expect(safeBackPath(undefined)).toBe("/dashboard");
+    expect(safeBackPath(null)).toBe("/dashboard");
+    expect(safeBackPath(42)).toBe("/dashboard");
   });
 });

@@ -37,7 +37,7 @@ vi.mock("../lib/mail", () => ({
 }));
 
 import { tokenState, tokenExpiry, VERIFICATION_TTL_MS, RESET_TTL_MS } from "../lib/tokens";
-import { isEmailSendThrottled } from "../lib/ratelimit";
+import { isEmailSendIpThrottled, isEmailSendThrottled, EMAIL_SEND_IP_MAX_PER_DAY } from "../lib/ratelimit";
 import { hashToken } from "../lib/auth-utils";
 
 describe("email token state logic (pure)", () => {
@@ -70,6 +70,14 @@ describe("email send throttling (pure)", () => {
   it("blocks the 6th send within a day", () => {
     expect(isEmailSendThrottled([at(70), at(140), at(210), at(280), at(350)], now)).toBe(true);
     expect(isEmailSendThrottled([at(70), at(140), at(210), at(280)], now)).toBe(false);
+  });
+  it("per-IP: blocks at 20 sends within a day, ignores older sends", () => {
+    const sends = (n: number, minAgo: number) => Array.from({ length: n }, () => at(minAgo));
+    expect(EMAIL_SEND_IP_MAX_PER_DAY).toBe(20);
+    expect(isEmailSendIpThrottled(sends(19, 60), now)).toBe(false);
+    expect(isEmailSendIpThrottled(sends(20, 60), now)).toBe(true);
+    expect(isEmailSendIpThrottled(sends(20, 25 * 60), now)).toBe(false); // all >24h old
+    expect(isEmailSendIpThrottled([...sends(19, 60), ...sends(5, 25 * 60)], now)).toBe(false);
   });
 });
 

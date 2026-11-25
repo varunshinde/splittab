@@ -68,6 +68,27 @@ export async function checkEmailSendThrottle(kind: string, email: string): Promi
   return isEmailSendThrottled(attempts);
 }
 
+// Per-IP cap on top of the per-email one: one IP can trigger at most
+// EMAIL_SEND_IP_MAX_PER_DAY sends of a kind per day, no matter how many
+// distinct addresses it rotates through. The "unknown" IP (no proxy headers)
+// is exempt — many unrelated users could share that bucket.
+export const EMAIL_SEND_IP_MAX_PER_DAY = 20;
+
+export function isEmailSendIpThrottled(attempts: AttemptLike[], now: Date = new Date()): boolean {
+  const dayAgo = now.getTime() - 24 * 60 * 60 * 1000;
+  return attempts.filter((a) => a.createdAt.getTime() > dayAgo).length >= EMAIL_SEND_IP_MAX_PER_DAY;
+}
+
+export async function checkEmailSendIpThrottle(kind: string, ip: string): Promise<boolean> {
+  if (ip === "unknown") return false;
+  const attempts = await prisma.loginAttempt.findMany({
+    where: { kind, ip, createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+    orderBy: { createdAt: "desc" },
+    take: EMAIL_SEND_IP_MAX_PER_DAY,
+  }).catch(() => []);
+  return isEmailSendIpThrottled(attempts);
+}
+
 export async function checkLoginLockout(email: string): Promise<boolean> {
   const attempts = await prisma.loginAttempt.findMany({
     where: { kind: "login", email, createdAt: { gte: new Date(Date.now() - LOGIN_WINDOW_MS - LOGIN_LOCKOUT_MS) } },

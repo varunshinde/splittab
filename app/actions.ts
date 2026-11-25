@@ -12,7 +12,7 @@ import { ocrReceipt } from "@/lib/ocr";
 import { decideAddFriend, isValidEmail, normalizeEmail, normalizePair } from "@/lib/friends";
 import { areFriends, findFriendship, getMyExpense, resolveUserByEmail } from "@/lib/data";
 import {
-  assertValidUpload, capString, parseAmountCents, parseCurrency, parseDate, requireString,
+  assertValidUpload, capString, parseAmountCents, parseCurrency, parseDate, requireString, safeBackPath,
   MAX_CATEGORY_LEN, MAX_DESCRIPTION_LEN, MAX_GROUP_NAME_LEN, MAX_NOTES_LEN, MAX_NAME_LEN,
 } from "@/lib/validate";
 
@@ -286,7 +286,7 @@ export async function recordSettlementForm(formData: FormData) {
   const toUserId = String(formData.get("toUserId") ?? "");
   const groupId = String(formData.get("groupId") ?? "") || null;
   const amountInCents = parseAmountToCents(formData.get("amount"));
-  const back = String(formData.get("back") ?? "/dashboard");
+  const back = safeBackPath(formData.get("back"));
   if (fromUserId === toUserId) throw new Error("cannot settle with yourself");
   if (fromUserId !== me.id && toUserId !== me.id) throw new Error("you are not a party to this settlement");
   if (groupId) {

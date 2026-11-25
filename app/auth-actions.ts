@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COOKIE } from "@/lib/auth";
 import { generateSessionToken, hashPassword, hashToken, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
-import { checkEmailSendThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
+import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { getAppUrl, resetEmailHtml, sendEmail, verificationEmailHtml } from "@/lib/mail";
 import { RESET_TTL_MS, tokenExpiry, tokenState, VERIFICATION_TTL_MS } from "@/lib/tokens";
 import { capString, MAX_NAME_LEN } from "@/lib/validate";
@@ -131,7 +131,7 @@ export async function resendVerificationAction(formData: FormData) {
   const ip = clientIp(hdrs);
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const generic = `/login?notice=${encodeURIComponent("If an unverified account exists for that email, a new verification link is on its way.")}`;
-  if (isValidEmail(email) && !(await checkEmailSendThrottle("verify_resend", email))) {
+  if (isValidEmail(email) && !(await checkEmailSendThrottle("verify_resend", email)) && !(await checkEmailSendIpThrottle("verify_resend", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
     if (user && user.passwordHash && !user.emailVerifiedAt && !user.isPlaceholder) {
       await sendVerificationEmail(user.id, email);
@@ -147,7 +147,7 @@ export async function forgotPasswordAction(formData: FormData) {
   const ip = clientIp(hdrs);
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const generic = `/forgot-password?notice=${encodeURIComponent("If an account exists for that email, a password reset link is on its way.")}`;
-  if (isValidEmail(email) && !(await checkEmailSendThrottle("password_reset", email))) {
+  if (isValidEmail(email) && !(await checkEmailSendThrottle("password_reset", email)) && !(await checkEmailSendIpThrottle("password_reset", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
     if (user && user.passwordHash && !user.isPlaceholder) {
       await sendResetEmail(user.id, email);

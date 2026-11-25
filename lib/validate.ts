@@ -46,6 +46,23 @@ export function parseCurrency(raw: unknown): string {
   return c;
 }
 
+/**
+ * Validate a post-action "back" redirect target. Only same-origin absolute
+ * paths are allowed through: a string starting with exactly one "/".
+ * Protocol-relative URLs ("//evil.com"), backslash tricks ("/\\evil"),
+ * absolute URLs ("https://evil.com") and anything with control characters
+ * all fall back to "/dashboard" — an open-redirect guard for form-supplied
+ * redirect targets.
+ */
+export function safeBackPath(raw: unknown): string {
+  if (typeof raw !== "string") return "/dashboard";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
+  if (raw.includes("\\") || raw.includes("://")) return "/dashboard";
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return "/dashboard";
+  return raw;
+}
+
 // --- Receipt uploads ---------------------------------------------------------
 
 export const MAX_RECEIPT_BYTES = 10 * 1024 * 1024; // 10 MB hard per-file cap
