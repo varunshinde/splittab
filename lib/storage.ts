@@ -61,7 +61,7 @@ export class VercelBlobStorageProvider implements StorageProvider {
 /** Pick the storage provider from the environment: Vercel Blob when its
  *  read/write token is configured, otherwise the local filesystem. */
 export function getStorageProvider(
-  env: { BLOB_READ_WRITE_TOKEN?: string } = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): StorageProvider {
   const token = env.BLOB_READ_WRITE_TOKEN?.trim();
   return token ? new VercelBlobStorageProvider(token) : new LocalStorageProvider();

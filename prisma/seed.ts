@@ -1,9 +1,7 @@
-import { PrismaClient } from "../lib/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { prisma } from "../lib/db";
 import { STATIC_RATES } from "../lib/currency";
 import { equalSplit } from "../lib/splits";
 import { tripPassExpiry } from "../lib/pro";
-const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 async function main() {
   await prisma.activity.deleteMany(); await prisma.expenseItem.deleteMany(); await prisma.expenseSplit.deleteMany();
   await prisma.expense.deleteMany(); await prisma.receipt.deleteMany(); await prisma.tripPass.deleteMany();
