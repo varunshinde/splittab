@@ -1,125 +1,220 @@
+<div align="center">
+
 # OSS Splitwise
 
-Open-source Splitwise clone with the core (free-tier) feature set **and** the Pro-tier feature set (minus payment integrations). Next.js App Router + TypeScript, Tailwind CSS, Prisma 7 + PostgreSQL, Recharts.
+**An open-source Splitwise clone — real accounts, friends by email, groups, and settle-up.**
+Split expenses with anyone, keep a running balance, and settle up. No demo data, no mock logins.
 
-> Money is always stored as **integer cents**. Exchange rates are stored as **scaled integers (rate × 1,000,000)**. No floats for money or rates anywhere in the core libs (`lib/splits.ts`, `lib/debt.ts`, `lib/balances.ts`, `lib/currency.ts`).
+[Live app](https://oss-splitwise.vercel.app) · [Features](#-features) · [Quick start](#-quick-start) · [Security](#-security) · [Architecture](#-architecture)
 
-## What changed vs. the MVP mock version
+</div>
 
-The first cut used a demo "select a user" cookie with seeded sample users. **That is gone.** This version is a real product flow, modeled on Splitwise:
+---
 
-- **Real accounts**: sign up / log in with email + password (bcrypt), DB-backed sessions. No demo data anywhere — the seed now loads *reference data only* (currency rates + the multi-currency feature flag).
-- **Friends by email**: add anyone by email, even before they have an account. Unregistered emails become *placeholder* accounts you can split with immediately; when that person signs up with the same email, they **claim** the placeholder and inherit its expenses and friendships.
-- **Friend (non-group) expenses**: expenses can live outside groups — you + one or more friends, equal split, payer selectable.
-- **Splitwise dashboard**: total balance / you owe / you are owed, per-friend owe & owed lists, and per-group balances.
-- **Settle up everywhere**: record real payments between friends, inside groups, or from the global Settle Up page.
-- **Design system**: Splitwise-style teal `#1CC29F` primary, "you owe" orange `#FF652F`, ink `#2E2E2E` text, white cards on a `#F7F7F7` app background, initial avatars with a deterministic color palette, left sidebar on desktop / top bar on mobile.
+## ✨ Features
 
-## Run it
+- **Real sign-up & login** — email + password with mandatory email verification
+- **Friends by email** — add anyone, even before they have an account; they claim their placeholder (and its expenses) when they sign up and verify
+- **Expenses anywhere** — inside groups *or* directly between friends, with equal / exact / percentage splits
+- **Splitwise-style dashboard** — total balance, *you owe*, *you are owed*, per-friend and per-group balances
+- **Settle up** — record real payments between friends, in groups, or globally
+- **Receipts** — upload receipt images (Vercel Blob in production), manual itemization
+- **Charts, search & export** — per-group spending charts, full expense search, JSON data export
+- **Pro-tier extras** — Trip Pass, default split settings, feature flags, multi-currency (static rates)
 
-### Option A — Docker Compose (DB + app)
+> 💰 **Money is always integer cents.** Exchange rates are scaled integers (rate × 1,000,000).
+> No floats for money or rates anywhere in the core math (`lib/splits.ts`, `lib/debt.ts`, `lib/balances.ts`).
+
+---
+
+## 🚀 Quick start
+
+### Option A — Docker Compose (app + database)
 
 ```bash
 cp .env.example .env
 docker compose up --build
-# app on http://localhost:3000 (compose runs db push, seed, then start)
+# → http://localhost:3000  (compose pushes the schema, seeds reference data, starts the app)
 ```
 
 ### Option B — Local
 
 ```bash
-cp .env.example .env          # DATABASE_URL for your Postgres
-docker compose up db -d       # just Postgres, or point DATABASE_URL at your own
+cp .env.example .env          # point DATABASE_URL at your Postgres
+docker compose up db -d       # just Postgres — or use your own / a Neon database
 npm install
 npx prisma generate
 npx prisma db push            # or: npx prisma migrate dev
-npm run db:seed               # reference data only: currency rates + feature flag
-npm run dev                   # http://localhost:3000
+npm run db:seed               # reference data only: currency rates + feature flags
+npm run dev                   # → http://localhost:3000
 ```
 
-Open the app, **sign up** for an account, then add friends by email or create a group.
+Then **sign up**, verify your email, and add friends by email or create a group.
 
-## How it works
+> 📧 **Email in development:** with no `RESEND_API_KEY` set, verification and reset
+> emails (including the links) are logged to the server console instead of sent.
 
-### Auth model
-- `POST /signup` — name, email, password (min **10** chars), hashed with **bcryptjs cost 12**. If the email belongs to a placeholder (invited) account, signup *claims* it; if it belongs to a real account, a generic error is shown (no account-existence leak). The account is created **unverified and NOT logged in**: a verification link (24h, single-use, SHA-256-hashed token) is emailed via Resend (`lib/mail.ts`).
-- `GET /verify-email?token=…` — consumes the token, sets `emailVerifiedAt`, redirects to login. The login page has a **resend** form (rate-limited: max 1/min, 5/day per email; always answers generically).
-- `POST /login` — generic "Invalid email or password." for every credential failure. The password is checked **first**; only then, if the account is unverified, does login say so (so verification status is never an enumeration oracle). On success a **fresh** session is minted: 32-byte CSPRNG token, only its SHA-256 hash stored (`Session` table), sent as an `httpOnly` cookie named `session` (`SameSite=Lax`, `Secure` in production, `path=/`). Sessions expire after **30 days absolute** or **7 days idle** (`lastSeenAt` refreshed on use, throttled to hourly writes). Logout deletes the session row server-side. Changing your password revokes all other sessions.
-- **Password reset** — `/forgot-password` always answers generically; the emailed link (1h, single-use, hashed token) opens `/reset-password`, and completing a reset **revokes ALL sessions** for the user (and verifies the email, since it proves inbox ownership).
-- Mail transport: Resend REST API with `RESEND_API_KEY` / `RESEND_FROM` (see `.env.example`). With no key configured, **development** logs emails (including links) to the server console; **production** signup reports the verification email as unavailable instead of pretending it sent.
-- Every page and server action resolves identity from the session via `lib/auth.ts` (`getCurrentUser` / `requireUser`). **No action trusts a client-supplied user id for identity.**
+---
 
-### Friends & expenses
-- `Friendship` rows store a normalized user pair (unique). Adding by email creates an ACCEPTED friendship immediately (Splitwise behavior), creating a placeholder user first if needed.
-- Expenses have a nullable `groupId`. Group expenses take participants from group members; friend expenses take participants from the `ExpenseSplit` rows (payer + selected friends). Splits use `lib/splits.ts` (equal / exact / percentage for group expenses; equal for the global add-expense flow).
-- Balances are pairwise (`lib/balances.ts`): for an expense paid by P, each participant owes P their share; settlements move the pair balance. Per-friend nets therefore span friend *and* group expenses with no double counting, and dashboard totals are sums of pairwise nets.
-- `Settlement` records a real payment (friend-level with `groupId = null`, or group-scoped).
+## 🧱 Tech stack
 
-### Receipt storage
-Receipt **images** are files; receipt **metadata** is in Postgres (`Receipt` row).
-- **Production (Vercel):** images go to [Vercel Blob](https://vercel.com/docs/vercel-blob) at full resolution via `VercelBlobStorageProvider` (`lib/storage.ts`), active when `BLOB_READ_WRITE_TOKEN` is set. `Receipt.filePath` holds the blob's public https URL.
-- **Local dev:** falls back to `LocalStorageProvider` under `public/uploads`.
-- Uploads are validated: image/PDF mime types only, extension must match, **10 MB hard per-file cap**, plus the per-user storage quota (default 10 GiB).
+| Layer | Choice |
+|---|---|
+| Framework | **Next.js 16** (App Router) + **React 19** + **TypeScript** |
+| Styling | **Tailwind CSS v4**, hand-written shadcn-style primitives, Recharts |
+| Database | **PostgreSQL** via **Prisma 7** (driver adapters: `@prisma/adapter-neon` for Neon, `@prisma/adapter-pg` otherwise) |
+| Auth | Custom — bcryptjs (cost 12), DB-backed sessions, Resend for verification / reset email |
+| Storage | **Vercel Blob** (production) · local filesystem (dev), behind a `StorageProvider` interface |
+| Hosting | **Vercel** + **Neon** Postgres |
+| Tests | **Vitest** — 67 tests, including DB-backed two-user authorization (IDOR) suites |
 
-## Security model
+**Design system:** Splitwise teal `#1CC29F` primary · "you owe" orange `#FF652F` · ink `#2E2E2E` ·
+white cards on `#F7F7F7` · initial avatars with a deterministic color palette · sidebar on desktop, top bar on mobile.
 
-Enforced in code and covered by tests (`tests/auth.test.ts`, `tests/idor.test.ts`, `tests/email-verification.test.ts`):
+---
 
-- **Passwords**: bcryptjs cost **12**, minimum length **10**. Hashes are never logged, returned, or included in exports (the export strips `passwordHash`).
-- **Login throttling**: DB-backed `LoginAttempt` tracking (email + IP). **5 failed logins for an email within 15 minutes → 15-minute lockout**, answered with the same generic error (no lockout hint). A successful login clears the counter. **Signup is rate-limited to 10 attempts per IP per hour.**
-- **Sessions**: 32-byte CSPRNG tokens, SHA-256 hashes at rest, `httpOnly` + `Secure` (prod) + `SameSite=Lax` cookies, 30-day absolute / 7-day idle expiry, server-side deletion on logout, fresh token on every login (no fixation), password change revokes all other sessions.
-- **Authorization (IDOR)**: every resource is fetched scoped to the session user (`lib/data.ts`) — group pages 404 for non-members, receipt pages 404 for non-participants, settings/export only ever touch the session user's data, and every action re-validates membership/friendship server-side before writing. Two-user IDOR tests cover the group page, expense access, the group expense action, and the settlement action.
-- **No user enumeration**: login errors are fully generic; duplicate-email signup returns a generic "check your details / try logging in" message.
-- **Input validation**: strict server-side validation on every action (`lib/validate.ts`) — emails normalized (lowercase + trim) and format-checked, amounts positive integer cents bounded at $1M, strings length-capped, dates and currency codes validated. Actions read only their named fields. All DB access is through Prisma (parameterized).
-- **Security headers** (`next.config.ts`): CSP (`default-src 'self'`; images `self`/https/blob/data for Blob receipts; `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, `X-Frame-Options: DENY`. No `dangerouslySetInnerHTML` anywhere. CSP still allows `'unsafe-inline'` for scripts/styles because Next.js injects inline bootstrap code — a documented limitation.
-- **Email verification (enforced)**: signup creates an unverified account and emails a single-use, SHA-256-hashed verification token (24h expiry) via Resend; **login is blocked until the email is verified** (status revealed only after a correct password). Resend-verification and password-reset emails are rate-limited per email (1/min, 5/day) and always answered generically. This also closes the placeholder-claiming gap: claiming an invited (placeholder) account now requires verifying the invited email, so the claimer must control that inbox.
-- **Remaining operational requirement**: production sending needs `RESEND_API_KEY` set and a **verified sending domain** in Resend (`RESEND_FROM`). The default test sender (`onboarding@resend.dev`) only delivers to the Resend account owner's own email address, so real users won't receive mail until a domain is verified. Without a key, production signup honestly reports the verification email as unavailable (development logs the email + link to the console instead).
+## 🏗 Architecture
 
-## Tests
-
-```bash
-npm test   # vitest
 ```
-Suites: the original "grill" suite (settlement edge cases, split validation, currency round-trip, Trip Pass expiry, quota), storage provider selection (Blob mocked), `tests/auth.test.ts` (password hashing, session token/expiry/idle rules, lockout + signup throttle logic, input & upload validation), `tests/friends.test.ts` (friend-by-email decisions, placeholder claim decisions, friend-expense balance math), `tests/idor.test.ts` (DB-backed two-user authorization tests), and `tests/email-verification.test.ts` (token hash/expiry/single-use logic, send throttling, and the full DB-backed verify → login → reset flow with the mail layer mocked — no real API calls). DB suites require `DATABASE_URL`, use the dev database, and clean up after themselves.
+app/            Routes (App Router) — pages + server actions
+  auth-actions.ts   signup · login · logout · verify resend · password reset
+  actions.ts        expenses · settlements · groups · friends · receipts
+  api/export/       session-scoped JSON export
+components/     UI primitives, charts, avatar, expense form
+lib/
+  auth.ts           session lifecycle (create / resolve / revoke)
+  data.ts           every query scoped to the session user — the IDOR boundary
+  splits.ts         split math (equal / exact / percentage), integer cents
+  balances.ts       pairwise balances across friend + group expenses
+  debt.ts           debt simplification
+  ratelimit.ts      login lockout · signup throttle · email-send throttles
+  validate.ts       strict input validation + safe redirect targets
+  mail.ts           Resend REST client (no SDK)
+  storage.ts        StorageProvider: Vercel Blob / local filesystem
+prisma/         Schema + seed (reference data only — no demo users)
+tests/          Unit + DB-backed suites (auth, friends, IDOR, email verification, storage)
+```
 
-## Routes
+### How the core flows work
+
+**Auth.** Signup creates an *unverified* account and emails a verification link (token: 256-bit
+random, SHA-256 hash stored, single-use, 24 h). Login checks the password **first** and only then
+reveals unverified status — verification state is never an enumeration oracle. Sessions are 32-byte
+CSPRNG tokens (hash at rest) in an `httpOnly` cookie: 30-day absolute / 7-day idle expiry, fresh
+token per login, server-side deletion on logout, and a password change or reset revokes **all**
+sessions.
+
+**Friends & placeholders.** Adding an email creates an accepted `Friendship` immediately
+(Splitwise behavior). If the email isn't registered, a *placeholder* user is created so you can
+split with them right away; when they sign up with that email **and verify it**, they claim the
+placeholder and inherit its expenses and friendships.
+
+**Balances.** Balances are *pairwise*: for an expense paid by P, each participant owes P their
+share; settlements move the pair balance. Per-friend nets span friend and group expenses with no
+double counting, and dashboard totals are sums of pairwise nets.
+
+**Receipts.** Metadata lives in Postgres (`Receipt` row); images are files. Production uploads go
+to Vercel Blob at full resolution; dev falls back to `public/uploads`. Uploads are validated —
+image/PDF only, extension must match the mime type, 10 MB cap, per-user storage quota.
+
+---
+
+## 🔐 Security
+
+Security was a design priority — this app is built to be safe on the public internet.
+
+| Area | What's enforced |
+|---|---|
+| **Passwords** | bcrypt cost **12**, minimum length **10**; hashes never logged, returned, or exported |
+| **Sessions** | Hashed tokens at rest, `httpOnly` + `Secure` + `SameSite=Lax`, idle + absolute expiry, revocation on password change/reset |
+| **Login throttling** | 5 failures / 15 min → 15-min lockout, generic errors only; signup capped at 10 / hour / IP |
+| **Email-send throttling** | Verification-resend & password-reset: **1 / min and 5 / day per email**, plus **20 / day per IP** — always answered generically |
+| **No enumeration** | Login, signup, resend, and reset responses never reveal whether an account exists |
+| **Authorization (IDOR)** | Every read/write is scoped to the session user in `lib/data.ts`; non-members get **404**; covered by two-user DB tests |
+| **Redirect safety** | Post-action redirects validated against an internal-path allowlist (no open redirects) |
+| **Input validation** | Strict server-side validation on every action; all DB access via Prisma (parameterized) |
+| **Headers** | CSP, `nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`, `X-Frame-Options: DENY`; zero `dangerouslySetInnerHTML` |
+| **Database** | The app connects as a **limited-privilege role** (row CRUD only — no DDL, no DROP, no grant option); the owner credential is not in the app's environment |
+
+Known limitation: the CSP still allows `'unsafe-inline'` for scripts/styles because Next.js injects
+inline bootstrap code.
+
+<details>
+<summary><b>Production email requirement</b></summary>
+
+Verification and reset mail is sent via Resend. The default test sender
+(`onboarding@resend.dev`) only delivers to the Resend account owner's own inbox —
+for real users, verify a sending domain in Resend (free plan includes 3) and set
+`RESEND_FROM` to an address on it. Without `RESEND_API_KEY`, production signup
+honestly reports that the verification email is unavailable instead of faking success.
+</details>
+
+---
+
+## 🗺 Routes
 
 | Route | What |
 |---|---|
-| `/` | Landing (logged out) → redirects to `/dashboard` when logged in |
-| `/signup`, `/login` | Real auth (see above); login page also hosts the resend-verification form |
-| `/verify-email?token=…` | Consumes a verification token → verified, redirect to login |
-| `/forgot-password`, `/reset-password?token=…` | Password reset via emailed single-use link (revokes all sessions) |
-| `/dashboard` | Total balance / you owe / you are owed, per-friend lists, your groups |
-| `/friends`, `/friends/[id]` | Friends by email, per-friend balance, history, add expense, settle up |
-| `/expenses/new` | Global add-expense: group OR friends, payer, date, equal split, notes |
-| `/settle` | Global settle-up: record a payment per outstanding balance |
+| `/` | Landing → redirects to `/dashboard` when logged in |
+| `/signup` · `/login` | Auth; login also hosts the resend-verification form |
+| `/verify-email?token=<redacted> | Consumes a verification token → login |
+| `/forgot-password` · `/reset-password?token=<redacted> | Password reset via emailed single-use link |
+| `/dashboard` | Total balance / you owe / you are owed, friends, groups |
+| `/friends` · `/friends/[id]` | Friends by email, per-friend balance & history, settle up |
+| `/expenses/new` | Add expense: group **or** friends, payer, date, equal split, notes |
+| `/settle` | Record a payment against any outstanding balance |
 | `/activity` | Your expense + settlement feed |
-| `/groups`, `/groups/[id]?tab=…` | Groups (create + invite by email); tabs: Expenses · Balances · Settle Up · Charts · Members · Activity (+ Trip Pass) |
-| `/search` | Search *your* expenses: description, amount range, date, participant |
+| `/groups` · `/groups/[id]?tab=…` | Groups; tabs: Expenses · Balances · Settle Up · Charts · Members · Activity · Trip Pass |
+| `/search` | Search *your* expenses by description, amount, date, participant |
 | `/settings` | Profile, change password, default splits, storage, JSON export |
-| `/receipts/[id]` | Receipt view + manual itemization (route param = expense id; participants only) |
-| `/api/export` | Download the session user's data as JSON (no id parameter — session only) |
+| `/receipts/[id]` | Receipt view + itemization (param = expense id; participants only) |
+| `/api/export` | Download your data as JSON (session only, password hashes stripped) |
 
-## Pro features: implemented vs stubbed
+---
+
+## ⚙️ Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Postgres connection string (pooled) |
+| `DATABASE_URL_UNPOOLED` | Direct connection string (migrations / `db push`) |
+| `RESEND_API_KEY` | Resend API key for verification & reset email |
+| `RESEND_FROM` | Sender identity, e.g. `OSS Splitwise <noreply@yourdomain>` |
+| `BLOB_READ_WRITE_TOKEN` | Enables Vercel Blob receipt storage (auto-set on Vercel) |
+| `NEXT_PUBLIC_APP_URL` | Public base URL used in emailed links |
+
+See [`.env.example`](.env.example) for the full template.
+
+---
+
+## 🧪 Tests
+
+```bash
+npm test   # vitest — 67 tests
+```
+
+- **Unit:** split & settlement math, currency round-trips, token lifecycle, lockout / throttle logic, input & upload validation, redirect safety
+- **DB-backed:** two-user IDOR suite (group page, expense access, group expense & settlement actions), the full verify → login → reset flow (mail layer mocked — no real API calls), friend-by-email & placeholder-claim decisions, storage provider selection
+
+DB suites require `DATABASE_URL`, run against the dev database, and clean up after themselves.
+
+---
+
+## 📦 Feature status
 
 | Feature | Status |
 |---|---|
-| Unlimited expenses, ad-free UI | ✅ Implemented |
-| Receipt scanning & itemization | 🟡 **Stubbed OCR** — `ocrReceipt()` returns `[]` + TODO; upload, storage and manual itemization are fully implemented |
-| Transaction import | 🟡 **Stub** — CSV rows → expenses via `importTransactions()`; no live bank API |
-| Default split settings (per group / per friend) | ✅ Implemented |
-| Charts & graphs (time + category, per group) | ✅ Implemented (Recharts, brand palette) |
-| Full expense search | ✅ Implemented (scoped to your expenses) |
-| Currency conversion | 🟡 **Static rate table stub** — scaled-integer math, pluggable interface, TODO for a live rates API; rates seeded into `CurrencyRate`, gated by the `multi-currency` feature flag |
-| High-res receipt cloud storage | ✅ **Vercel Blob in production** — behind a `StorageProvider` interface; local filesystem fallback; validated uploads + quota |
-| Data backup / export | ✅ Implemented (JSON download, session-scoped, hash-stripped) |
-| Early-access feature flags | ✅ Implemented (`FeatureFlag` table + `isFeatureEnabled` gate) |
-| Trip Pass (Pro user grants a group 30 days of Pro) | ✅ Implemented (`grantTripPass`, `tripPassExpiry`, `hasProAccess`) |
+| Expenses, groups, friends, settle-up, activity | ✅ Implemented |
+| Receipt upload + cloud storage + manual itemization | ✅ Implemented |
+| Receipt OCR auto-itemization | 🟡 Stub — `ocrReceipt()` returns `[]` (TODO) |
+| Transaction import | 🟡 Stub — CSV rows → expenses; no live bank API |
+| Currency conversion | 🟡 Static seeded rate table; interface ready for a live rates API |
+| Charts, search, default splits, Trip Pass, feature flags | ✅ Implemented |
 
-Explicit non-goals (not built): Venmo/PayPal or any payment processing, websockets, live bank APIs, real OCR, live exchange-rate APIs, OAuth/social login. (Email verification and password reset ARE built — via Resend, see Security model.)
+**Explicit non-goals:** payment processing (Venmo/PayPal), websockets, live bank APIs, real OCR, live exchange rates, OAuth/social login.
 
-## Notes / deviations
+---
 
-- **shadcn/ui**: a full shadcn CLI init was replaced by hand-written shadcn-style primitives in `components/ui/ui.tsx` (Tailwind + clsx), restyled with the design tokens above.
-- **Prisma 7**: uses the `prisma-client` generator (generated client in `lib/generated/prisma`, gitignored — run `npx prisma generate`) and driver adapters (`@prisma/adapter-neon` for Neon hosts, `@prisma/adapter-pg` otherwise); DB URL lives in `prisma.config.ts` / `.env`.
+## 📄 License
+
+[GPLv3](LICENSE)
