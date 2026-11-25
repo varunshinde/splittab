@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { getFriends, getMyExpenses, getMySettlements } from "@/lib/data";
+import { getBlockedUsers, getFriendRequests, getFriends, getMyExpenses, getMySettlements } from "@/lib/data";
 import { pairwiseNets } from "@/lib/balances";
 import { expenseToCurrency, settlementToCurrency } from "@/lib/convert";
 import { formatMoney } from "@/lib/format";
-import { addFriendForm, removeFriendForm } from "../actions";
+import { acceptFriendForm, addFriendForm, blockUserForm, cancelFriendRequestForm, declineFriendForm, removeFriendForm } from "../actions";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
@@ -13,8 +13,10 @@ export default async function FriendsPage({ searchParams }: { searchParams: Prom
   const me = await requireUser();
   const sp = await searchParams;
   const cur = me.defaultCurrency;
-  const [friends, expensesRaw, settlementsRaw] = await Promise.all([
+  const [friends, requests, blocked, expensesRaw, settlementsRaw] = await Promise.all([
     getFriends(me.id),
+    getFriendRequests(me.id),
+    getBlockedUsers(me.id),
     getMyExpenses(me.id),
     getMySettlements(me.id),
   ]);
@@ -31,12 +33,58 @@ export default async function FriendsPage({ searchParams }: { searchParams: Prom
 
       <Card>
         <h2 className="mb-1 font-semibold">Add a friend by email</h2>
-        <p className="mb-3 text-sm text-neutral-500">They don&rsquo;t need an account yet — add them now, split expenses right away, and they&rsquo;ll claim everything when they sign up with the same email.</p>
+        <p className="mb-3 text-sm text-neutral-500">Send them a friend request. Once they accept, you can split expenses together. If they don&rsquo;t have an account yet, the request waits for them until they sign up with the same email.</p>
         <form action={addFriendForm} className="flex flex-wrap items-end gap-2">
           <div className="min-w-64 flex-1"><Label htmlFor="email">Email address</Label><Input id="email" name="email" type="email" required placeholder="friend@example.com" /></div>
-          <Button type="submit">Add friend</Button>
+          <Button type="submit">Send request</Button>
         </form>
       </Card>
+
+      {requests.incoming.length > 0 && (
+        <Card className="divide-y divide-neutral-100 p-2">
+          <h2 className="px-2 pb-1 pt-2 font-semibold">Friend requests</h2>
+          {requests.incoming.map((f) => (
+            <div key={f.id} className="flex items-center gap-3 px-2 py-2.5">
+              <Avatar name={f.name} seed={f.email} />
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{f.name}</div>
+                <div className="truncate text-xs text-neutral-500">{f.email} wants to split expenses with you</div>
+              </div>
+              <form action={acceptFriendForm}>
+                <input type="hidden" name="friendId" value={f.id} />
+                <Button type="submit" className="px-3 py-1.5 text-xs">Accept</Button>
+              </form>
+              <form action={declineFriendForm}>
+                <input type="hidden" name="friendId" value={f.id} />
+                <Button type="submit" variant="secondary" className="px-3 py-1.5 text-xs">Decline</Button>
+              </form>
+              <form action={blockUserForm}>
+                <input type="hidden" name="friendId" value={f.id} />
+                <Button type="submit" variant="ghost" className="px-2 py-1.5 text-xs text-neutral-400 hover:text-red-600">Block</Button>
+              </form>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {requests.outgoing.length > 0 && (
+        <Card className="divide-y divide-neutral-100 p-2">
+          <h2 className="px-2 pb-1 pt-2 font-semibold">Requests you sent</h2>
+          {requests.outgoing.map((f) => (
+            <div key={f.id} className="flex items-center gap-3 px-2 py-2.5">
+              <Avatar name={f.name} seed={f.email} />
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{f.name}</div>
+                <div className="truncate text-xs text-neutral-500">{f.email} · awaiting acceptance</div>
+              </div>
+              <form action={cancelFriendRequestForm}>
+                <input type="hidden" name="friendId" value={f.id} />
+                <Button type="submit" variant="ghost" className="px-2 py-1.5 text-xs text-neutral-400 hover:text-red-600">Cancel</Button>
+              </form>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {friends.length === 0 ? (
         <Card className="p-6 text-center">
@@ -62,9 +110,32 @@ export default async function FriendsPage({ searchParams }: { searchParams: Prom
                   <input type="hidden" name="friendId" value={f.id} />
                   <Button type="submit" variant="ghost" className="px-2 py-1.5 text-xs text-neutral-400 hover:text-red-600">Remove</Button>
                 </form>
+                <form action={blockUserForm}>
+                  <input type="hidden" name="friendId" value={f.id} />
+                  <Button type="submit" variant="ghost" className="px-2 py-1.5 text-xs text-neutral-400 hover:text-red-600">Block</Button>
+                </form>
               </div>
             );
           })}
+        </Card>
+      )}
+
+      {blocked.length > 0 && (
+        <Card className="divide-y divide-neutral-100 p-2">
+          <h2 className="px-2 pb-1 pt-2 font-semibold">Blocked</h2>
+          {blocked.map((f) => (
+            <div key={f.id} className="flex items-center gap-3 px-2 py-2.5">
+              <Avatar name={f.name} seed={f.email} />
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{f.name}</div>
+                <div className="truncate text-xs text-neutral-500">{f.email} · can&rsquo;t send you requests</div>
+              </div>
+              <form action={removeFriendForm}>
+                <input type="hidden" name="friendId" value={f.id} />
+                <Button type="submit" variant="secondary" className="px-3 py-1.5 text-xs">Unblock</Button>
+              </form>
+            </div>
+          ))}
         </Card>
       )}
     </div>

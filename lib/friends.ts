@@ -28,33 +28,45 @@ export interface ExistingUserLike {
   isPlaceholder: boolean;
 }
 
+export interface FriendshipLike {
+  status: "PENDING" | "ACCEPTED" | "BLOCKED";
+  requestedById: string | null;
+}
+
 export type AddFriendDecision =
   | { kind: "self" }
   | { kind: "invalid-email" }
   | { kind: "already-friends"; userId: string }
-  | { kind: "existing-user"; userId: string }
+  | { kind: "already-requested"; userId: string }
+  | { kind: "accept-theirs"; userId: string } // they already asked me: my "add" accepts
+  | { kind: "blocked"; userId: string } // a block exists either way: silently do nothing
+  | { kind: "request-existing"; userId: string }
   | { kind: "create-placeholder" };
 
 /**
- * Decide what "add friend by email" should do.
- * - email is my own            -> self
- * - email malformed            -> invalid-email
- * - target already my friend   -> already-friends
- * - a user (real or placeholder) with that email exists -> befriend them now
- *   (Splitwise makes email-added friends usable for expenses immediately)
- * - nobody registered with it  -> create a placeholder (shadow) user
+ * Decide what "add friend by email" should do (F1: consent-based).
+ * Friendships start PENDING and only become usable for expenses once the
+ * other side accepts. Decision inputs are the target user (if any) and the
+ * current friendship row (if any).
  */
 export function decideAddFriend(input: {
+  myId: string;
   myEmail: string;
   email: string;
   existingUser: ExistingUserLike | null;
-  alreadyFriends: boolean;
+  friendship: FriendshipLike | null;
 }): AddFriendDecision {
   const email = normalizeEmail(input.email);
   if (!isValidEmail(email)) return { kind: "invalid-email" };
   if (email === normalizeEmail(input.myEmail)) return { kind: "self" };
-  if (input.existingUser && input.alreadyFriends) return { kind: "already-friends", userId: input.existingUser.id };
-  if (input.existingUser) return { kind: "existing-user", userId: input.existingUser.id };
+  const f = input.friendship;
+  if (input.existingUser && f) {
+    if (f.status === "BLOCKED") return { kind: "blocked", userId: input.existingUser.id };
+    if (f.status === "ACCEPTED") return { kind: "already-friends", userId: input.existingUser.id };
+    if (f.requestedById === input.myId) return { kind: "already-requested", userId: input.existingUser.id };
+    return { kind: "accept-theirs", userId: input.existingUser.id };
+  }
+  if (input.existingUser) return { kind: "request-existing", userId: input.existingUser.id };
   return { kind: "create-placeholder" };
 }
 

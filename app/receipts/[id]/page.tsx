@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getMyExpense } from "@/lib/data";
 import { formatMoney } from "@/lib/format";
 import { ocrReceipt } from "@/lib/ocr";
-import { addItemForm } from "../../actions";
+import { addItemForm, deleteExpenseForm } from "../../actions";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
 // Route param is the EXPENSE id; its receipt (if any) is itemized here.
@@ -47,6 +47,14 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
           <div><Label>Assign to</Label>
             <select name="assignedToUserId" className={selectClass}><option value="">Unassigned</option>{[...participants.entries()].map(([uid, name]) => <option key={uid} value={uid}>{uid === me.id ? "You" : name}</option>)}</select></div>
           <Button type="submit">Add item</Button>
+        </form>
+      </Card>
+      <Card>
+        <h2 className="mb-1 font-semibold">Delete this expense</h2>
+        <p className="mb-3 text-sm text-neutral-500">Removes the expense and its splits for everyone. This can&rsquo;t be undone.</p>
+        <form action={deleteExpenseForm}>
+          <input type="hidden" name="expenseId" value={id} />
+          <Button type="submit" variant="secondary" className="text-red-600">Delete expense</Button>
         </form>
       </Card>
     </div>

@@ -16,7 +16,28 @@ export async function getFriendships(userId: string) {
 /** The other side of each of my friendships. */
 export async function getFriends(userId: string) {
   const friendships = await getFriendships(userId);
-  return friendships.map((f) => (f.userAId === userId ? f.userB : f.userA));
+  return friendships
+    .filter((f) => f.status === "ACCEPTED")
+    .map((f) => (f.userAId === userId ? f.userB : f.userA));
+}
+
+/** Pending friend requests, split by direction (F1). */
+export async function getFriendRequests(userId: string) {
+  const friendships = await getFriendships(userId);
+  const pending = friendships.filter((f) => f.status === "PENDING");
+  const other = (f: (typeof pending)[number]) => (f.userAId === userId ? f.userB : f.userA);
+  return {
+    incoming: pending.filter((f) => f.requestedById !== userId).map(other),
+    outgoing: pending.filter((f) => f.requestedById === userId).map(other),
+  };
+}
+
+/** Users I have blocked (they are silently unable to re-add me). */
+export async function getBlockedUsers(userId: string) {
+  const friendships = await getFriendships(userId);
+  return friendships
+    .filter((f) => f.status === "BLOCKED" && f.blockedById === userId)
+    .map((f) => (f.userAId === userId ? f.userB : f.userA));
 }
 
 export async function findFriendship(userId: string, otherId: string) {
@@ -25,7 +46,10 @@ export async function findFriendship(userId: string, otherId: string) {
 }
 
 export async function areFriends(userId: string, otherId: string): Promise<boolean> {
-  return !!(await findFriendship(userId, otherId));
+  // Only an ACCEPTED friendship counts (F1): a pending request or a block
+  // grants no expense/settlement rights.
+  const f = await findFriendship(userId, otherId);
+  return f?.status === "ACCEPTED";
 }
 
 /** Find a user by email or create a placeholder (shadow) account for them. */

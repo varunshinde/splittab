@@ -12,6 +12,7 @@ datasource db {
 enum FriendshipStatus {
   PENDING
   ACCEPTED
+  BLOCKED
 }
 
 model User {
@@ -112,6 +113,12 @@ model Friendship {
   userAId   String
   userBId   String
   status    FriendshipStatus @default(ACCEPTED)
+  // Who sent the friend request (for PENDING rows); null for friendships
+  // created implicitly by group co-membership.
+  requestedById String?
+  // Who blocked whom (for BLOCKED rows): the blocker; the other party is
+  // silently prevented from re-requesting or re-adding.
+  blockedById   String?
   createdAt DateTime         @default(now())
   userA     User             @relation("FriendshipA", fields: [userAId], references: [id], onDelete: Cascade)
   userB     User             @relation("FriendshipB", fields: [userBId], references: [id], onDelete: Cascade)

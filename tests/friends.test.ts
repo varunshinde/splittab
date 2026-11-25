@@ -5,26 +5,36 @@ import { dashboardTotals, myNet, netBetween, pairwiseNets } from "../lib/balance
 
 describe("friend-by-email decisions", () => {
   const me = "me@example.com";
+  const myId = "u1";
   it("normalizes emails (trim + lowercase)", () => {
     expect(normalizeEmail("  Alice@Example.COM ")).toBe("alice@example.com");
     expect(placeholderName("sam.x@a.com")).toBe("sam.x");
   });
-  it("adding an existing registered user befriends them immediately", () => {
-    const d = decideAddFriend({ myEmail: me, email: "Bob@Example.com", existingUser: { id: "u2", email: "bob@example.com", isPlaceholder: false }, alreadyFriends: false });
-    expect(d).toEqual({ kind: "existing-user", userId: "u2" });
+  it("adding an existing registered user sends a request (F1: no instant friendship)", () => {
+    const d = decideAddFriend({ myId, myEmail: me, email: "Bob@Example.com", existingUser: { id: "u2", email: "bob@example.com", isPlaceholder: false }, friendship: null });
+    expect(d).toEqual({ kind: "request-existing", userId: "u2" });
   });
   it("adding an unregistered email creates a placeholder", () => {
-    const d = decideAddFriend({ myEmail: me, email: "new@example.com", existingUser: null, alreadyFriends: false });
+    const d = decideAddFriend({ myId, myEmail: me, email: "new@example.com", existingUser: null, friendship: null });
     expect(d).toEqual({ kind: "create-placeholder" });
   });
-  it("adding a placeholder user again befriends the placeholder", () => {
-    const d = decideAddFriend({ myEmail: me, email: "invited@example.com", existingUser: { id: "u9", email: "invited@example.com", isPlaceholder: true }, alreadyFriends: false });
-    expect(d).toEqual({ kind: "existing-user", userId: "u9" });
+  it("adding a placeholder user requests the placeholder", () => {
+    const d = decideAddFriend({ myId, myEmail: me, email: "invited@example.com", existingUser: { id: "u9", email: "invited@example.com", isPlaceholder: true }, friendship: null });
+    expect(d).toEqual({ kind: "request-existing", userId: "u9" });
   });
-  it("self and invalid emails are rejected; existing friends are detected", () => {
-    expect(decideAddFriend({ myEmail: me, email: "ME@example.com", existingUser: null, alreadyFriends: false }).kind).toBe("self");
-    expect(decideAddFriend({ myEmail: me, email: "not-an-email", existingUser: null, alreadyFriends: false }).kind).toBe("invalid-email");
-    expect(decideAddFriend({ myEmail: me, email: "bob@example.com", existingUser: { id: "u2", email: "bob@example.com", isPlaceholder: false }, alreadyFriends: true }).kind).toBe("already-friends");
+  it("self and invalid emails are rejected; accepted friends are detected", () => {
+    expect(decideAddFriend({ myId, myEmail: me, email: "ME@example.com", existingUser: null, friendship: null }).kind).toBe("self");
+    expect(decideAddFriend({ myId, myEmail: me, email: "not-an-email", existingUser: null, friendship: null }).kind).toBe("invalid-email");
+    expect(decideAddFriend({ myId, myEmail: me, email: "bob@example.com", existingUser: { id: "u2", email: "bob@example.com", isPlaceholder: false }, friendship: { status: "ACCEPTED", requestedById: "u2" } }).kind).toBe("already-friends");
+  });
+  it("pending states: my request is a no-op; their request is accepted by adding them", () => {
+    const bob = { id: "u2", email: "bob@example.com", isPlaceholder: false };
+    expect(decideAddFriend({ myId, myEmail: me, email: "bob@example.com", existingUser: bob, friendship: { status: "PENDING", requestedById: myId } }).kind).toBe("already-requested");
+    expect(decideAddFriend({ myId, myEmail: me, email: "bob@example.com", existingUser: bob, friendship: { status: "PENDING", requestedById: "u2" } }).kind).toBe("accept-theirs");
+  });
+  it("a blocked pair silently no-ops in both directions", () => {
+    const bob = { id: "u2", email: "bob@example.com", isPlaceholder: false };
+    expect(decideAddFriend({ myId, myEmail: me, email: "bob@example.com", existingUser: bob, friendship: { status: "BLOCKED", requestedById: null } }).kind).toBe("blocked");
   });
   it("pair normalization is order-independent and rejects self-pairs", () => {
     expect(normalizePair("b", "a")).toEqual(["a", "b"]);

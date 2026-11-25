@@ -29,13 +29,24 @@ function parseAmountToCents(raw: FormDataEntryValue | null): number {
   return parseAmountCents(raw);
 }
 
-async function befriend(userId: string, otherId: string) {
+/** Group co-membership implies an ACCEPTED friendship (Splitwise model).
+ *  Never resurrects a BLOCKED pair: returns false when a block exists. */
+async function befriend(userId: string, otherId: string): Promise<boolean> {
   const [a, b] = normalizePair(userId, otherId);
+  const existing = await prisma.friendship.findUnique({ where: { userAId_userBId: { userAId: a, userBId: b } } });
+  if (existing?.status === "BLOCKED") return false;
   await prisma.friendship.upsert({
     where: { userAId_userBId: { userAId: a, userBId: b } },
     create: { userAId: a, userBId: b, status: "ACCEPTED" },
     update: { status: "ACCEPTED" },
   });
+  return true;
+}
+
+/** True when `otherId` has blocked `userId` (they must not be re-added). */
+async function blockedBy(userId: string, otherId: string): Promise<boolean> {
+  const f = await findFriendship(userId, otherId);
+  return f?.status === "BLOCKED" && f.blockedById === otherId;
 }
 
 // --- Friends ---------------------------------------------------------------
@@ -47,21 +58,95 @@ export async function addFriendForm(formData: FormData) {
   }
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const existing = await prisma.user.findUnique({ where: { email } }).catch(() => null);
-  const already = existing ? await areFriends(me.id, existing.id) : false;
+  const friendship = existing ? await findFriendship(me.id, existing.id) : null;
   const decision = decideAddFriend({
+    myId: me.id,
     myEmail: me.email,
     email,
     existingUser: existing ? { id: existing.id, email: existing.email, isPlaceholder: existing.isPlaceholder } : null,
-    alreadyFriends: already,
+    friendship: friendship ? { status: friendship.status, requestedById: friendship.requestedById } : null,
   });
   if (decision.kind === "invalid-email") redirect(`/friends?error=${encodeURIComponent("Please enter a valid email address.")}`);
   if (decision.kind === "self") redirect(`/friends?error=${encodeURIComponent("That's your own email address.")}`);
   if (decision.kind === "already-friends") redirect(`/friends?notice=${encodeURIComponent("You are already friends with this person.")}`);
-  const targetId = decision.kind === "existing-user" ? decision.userId : (await resolveUserByEmail(email)).user.id;
-  await befriend(me.id, targetId);
+  if (decision.kind === "accept-theirs") {
+    await prisma.friendship.update({ where: { id: friendship!.id }, data: { status: "ACCEPTED" } });
+    await recordAction("friend_add", me.email, clientIp(await headers()));
+    revalidatePath("/friends");
+    redirect(`/friends?notice=${encodeURIComponent("Friend request accepted — you are now friends.")}`);
+  }
+  // F1 + F3: sending a request. The outcome message is IDENTICAL whether
+  // the target is a registered user, a brand-new placeholder, an already
+  // pending request, or a pair with a block (which silently no-ops) — the
+  // response never reveals which case it was.
+  const sent = `/friends?notice=${encodeURIComponent("Friend request sent. When they accept, you'll be able to split expenses together.")}`;
+  if (decision.kind === "blocked" || decision.kind === "already-requested") {
+    redirect(sent);
+  }
+  const targetId = decision.kind === "request-existing" ? decision.userId : (await resolveUserByEmail(email)).user.id;
+  const [a, b] = normalizePair(me.id, targetId);
+  await prisma.friendship.upsert({
+    where: { userAId_userBId: { userAId: a, userBId: b } },
+    create: { userAId: a, userBId: b, status: "PENDING", requestedById: me.id },
+    update: {},
+  });
   await recordAction("friend_add", me.email, clientIp(await headers()));
   revalidatePath("/friends");
-  redirect(`/friends?notice=${encodeURIComponent(decision.kind === "create-placeholder" ? "Friend added. They'll see the shared expenses when they sign up with this email." : "Friend added.")}`);
+  redirect(sent);
+}
+
+/** Accept an incoming friend request (they asked me). */
+export async function acceptFriendForm(formData: FormData) {
+  const me = await requireUser();
+  const friendId = String(formData.get("friendId") ?? "");
+  const friendship = await findFriendship(me.id, friendId);
+  if (friendship && friendship.status === "PENDING" && friendship.requestedById === friendId) {
+    await prisma.friendship.update({ where: { id: friendship.id }, data: { status: "ACCEPTED" } });
+  }
+  revalidatePath("/friends");
+  redirect("/friends");
+}
+
+/** Decline an incoming friend request: the row is deleted. */
+export async function declineFriendForm(formData: FormData) {
+  const me = await requireUser();
+  const friendId = String(formData.get("friendId") ?? "");
+  const friendship = await findFriendship(me.id, friendId);
+  if (friendship && friendship.status === "PENDING" && friendship.requestedById === friendId) {
+    await prisma.friendship.delete({ where: { id: friendship.id } });
+  }
+  revalidatePath("/friends");
+  redirect("/friends");
+}
+
+/** Withdraw an outgoing friend request I sent. */
+export async function cancelFriendRequestForm(formData: FormData) {
+  const me = await requireUser();
+  const friendId = String(formData.get("friendId") ?? "");
+  const friendship = await findFriendship(me.id, friendId);
+  if (friendship && friendship.status === "PENDING" && friendship.requestedById === me.id) {
+    await prisma.friendship.delete({ where: { id: friendship.id } });
+  }
+  revalidatePath("/friends");
+  redirect("/friends");
+}
+
+/** Block a user: ends any friendship/request and silently prevents them
+ *  from re-adding me (friend requests and group adds no-op). Unblocking is
+ *  the Remove button (deletes the row). */
+export async function blockUserForm(formData: FormData) {
+  const me = await requireUser();
+  const friendId = String(formData.get("friendId") ?? "");
+  if (friendId && friendId !== me.id) {
+    const [a, b] = normalizePair(me.id, friendId);
+    await prisma.friendship.upsert({
+      where: { userAId_userBId: { userAId: a, userBId: b } },
+      create: { userAId: a, userBId: b, status: "BLOCKED", blockedById: me.id },
+      update: { status: "BLOCKED", blockedById: me.id },
+    });
+  }
+  revalidatePath("/friends");
+  redirect("/friends");
 }
 
 export async function removeFriendForm(formData: FormData) {
@@ -94,7 +179,12 @@ export async function createGroupForm(formData: FormData) {
     throw new Error(`at most ${MAX_GROUP_INVITEES} people can be invited at once`);
   }
   const invitees = [];
-  for (const email of inviteEmails) invitees.push((await resolveUserByEmail(email)).user);
+  for (const email of inviteEmails) {
+    const u = (await resolveUserByEmail(email)).user;
+    // Someone who blocked me is silently left out (F1): no membership, no
+    // friendship, and the response doesn't reveal it.
+    if (!(await blockedBy(me.id, u.id))) invitees.push(u);
+  }
   const group = await prisma.group.create({
     data: {
       name, type, baseCurrency,
@@ -119,6 +209,10 @@ export async function addGroupMemberForm(formData: FormData) {
   if (!membership) throw new Error("you are not a member of this group");
   if (!isValidEmail(email) || email === normalizeEmail(me.email)) redirect(`/groups/${groupId}?tab=members&error=${encodeURIComponent("Enter someone else's valid email.")}`);
   const { user } = await resolveUserByEmail(email);
+  if (await blockedBy(me.id, user.id)) {
+    // They blocked me: silently do nothing, same outward response (F1).
+    redirect(`/groups/${groupId}?tab=members&notice=${encodeURIComponent("Member added.")}`);
+  }
   await prisma.groupMember.upsert({
     where: { userId_groupId: { userId: user.id, groupId } },
     create: { userId: user.id, groupId },
@@ -132,6 +226,20 @@ export async function addGroupMemberForm(formData: FormData) {
   // arbitrary email to the person adding it. (Co-members see names in the
   // members list by design — that's different from an email->name oracle.)
   redirect(`/groups/${groupId}?tab=members&notice=${encodeURIComponent("Member added.")}`);
+}
+
+/** Leave a group (F1): removes my membership. My past expenses stay as
+ *  history (balances with remaining members are preserved). */
+export async function leaveGroupForm(formData: FormData) {
+  const me = await requireUser();
+  const groupId = String(formData.get("groupId") ?? "");
+  const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
+  if (membership) {
+    await prisma.groupMember.delete({ where: { userId_groupId: { userId: me.id, groupId } } });
+    await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_left", message: `${me.name} left the group` } });
+  }
+  revalidatePath("/groups");
+  redirect("/groups");
 }
 
 // --- Expenses --------------------------------------------------------------
@@ -161,8 +269,9 @@ async function createExpense(meId: string, input: CreateExpenseInput) {
     if (!members.some((m) => m.userId === meId)) throw new Error("you are not a member of this group");
     allowedIds = new Set(members.map((m) => m.userId));
   } else {
-    // Friend expense: participants must be me or my friends.
-    const friendships = await prisma.friendship.findMany({ where: { OR: [{ userAId: meId }, { userBId: meId }] } });
+    // Friend expense: participants must be me or my ACCEPTED friends (F1) —
+    // a pending request grants no right to put someone in debt.
+    const friendships = await prisma.friendship.findMany({ where: { status: "ACCEPTED", OR: [{ userAId: meId }, { userBId: meId }] } });
     allowedIds = new Set([meId, ...friendships.map((f) => (f.userAId === meId ? f.userBId : f.userAId))]);
   }
   for (const id of [...input.participantIds, input.paidById]) {
@@ -242,6 +351,36 @@ export async function addGroupExpenseForm(formData: FormData) {
   await prisma.activity.create({ data: { groupId, userId: me.id, type: "expense_added", message: `Expense "${expense.description}" added` } });
   revalidatePath(`/groups/${groupId}`);
   redirect(`/groups/${groupId}`);
+}
+
+/** Delete (void) an expense (F1). Allowed for the payer OR any participant
+ *  in its splits — an affected party can always remove a debt recorded
+ *  against them. Splits and items cascade; a receipt row is removed and the
+ *  payer's storage counter is credited back. */
+export async function deleteExpenseForm(formData: FormData) {
+  const me = await requireUser();
+  const expenseId = String(formData.get("expenseId") ?? "");
+  const expense = await getMyExpense(me.id, expenseId); // payer or participant only
+  if (!expense) throw new Error("expense not found");
+  if (expense.receipt) {
+    await prisma.receipt.delete({ where: { id: expense.receipt.id } }).catch(() => {});
+    const payer = await prisma.user.findUnique({ where: { id: expense.paidById } });
+    if (payer) {
+      const used = payer.receiptStorageUsedBytes - expense.receipt.fileSizeBytes;
+      await prisma.user.update({
+        where: { id: payer.id },
+        data: { receiptStorageUsedBytes: used > BigInt(0) ? used : BigInt(0) },
+      }).catch(() => {});
+    }
+  }
+  await prisma.expense.delete({ where: { id: expenseId } });
+  if (expense.groupId) {
+    await prisma.activity.create({
+      data: { groupId: expense.groupId, userId: me.id, type: "expense_deleted", message: `Expense "${expense.description}" deleted` },
+    });
+  }
+  revalidatePath("/dashboard");
+  redirect(expense.groupId ? `/groups/${expense.groupId}` : "/dashboard");
 }
 
 export async function addItemForm(formData: FormData) {

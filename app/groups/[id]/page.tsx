@@ -6,7 +6,7 @@ import { formatMoney } from "@/lib/format";
 import { computeBalances, computeSimplifiedDebts } from "@/lib/debt";
 import { convertCurrency } from "@/lib/currency";
 import { hasProAccess } from "@/lib/pro";
-import { addGroupExpenseForm, addGroupMemberForm, grantTripPassForm, recordSettlementForm } from "../../actions";
+import { addGroupExpenseForm, addGroupMemberForm, grantTripPassForm, leaveGroupForm, recordSettlementForm } from "../../actions";
 import { SpendingCharts } from "@/components/Charts";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
@@ -179,6 +179,14 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
               <input type="hidden" name="groupId" value={id} />
               <div className="min-w-64 flex-1"><Label htmlFor="email">Email address</Label><Input id="email" name="email" type="email" required placeholder="friend@example.com" /></div>
               <Button type="submit">Add member</Button>
+            </form>
+          </Card>
+          <Card>
+            <h2 className="mb-1 font-semibold">Leave this group</h2>
+            <p className="mb-3 text-sm text-neutral-500">You&rsquo;ll stop seeing new expenses here. Expenses you&rsquo;re already part of stay as history.</p>
+            <form action={leaveGroupForm}>
+              <input type="hidden" name="groupId" value={id} />
+              <Button type="submit" variant="secondary" className="text-red-600">Leave group</Button>
             </form>
           </Card>
         </div>
