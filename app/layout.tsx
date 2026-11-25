@@ -7,13 +7,13 @@ import { Avatar } from "@/components/Avatar";
 import { NavLinks } from "@/components/NavLinks";
 import { Button } from "@/components/ui/ui";
 
-export const metadata: Metadata = { title: "OSS Splitwise", description: "Open-source Splitwise clone — split expenses with friends and groups" };
+export const metadata: Metadata = { title: "SplitTab", description: "SplitTab — split expenses with friends and groups" };
 
 function Logo() {
   return (
     <Link href="/dashboard" className="flex items-center gap-2 text-lg font-bold tracking-tight text-ink">
       <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-base font-black text-white">S</span>
-      OSS&nbsp;Splitwise
+      SplitTab
     </Link>
   );
 }

@@ -1,6 +1,6 @@
 <div align="center">
 
-# OSS Splitwise
+# SplitTab
 
 **An open-source Splitwise clone — real accounts, friends by email, groups, and settle-up.**
 Split expenses with anyone, keep a running balance, and settle up. No demo data, no mock logins.
@@ -179,7 +179,7 @@ honestly reports that the verification email is unavailable instead of faking su
 | `DATABASE_URL` | Postgres connection string (pooled) |
 | `DATABASE_URL_UNPOOLED` | Direct connection string (migrations / `db push`) |
 | `RESEND_API_KEY` | Resend API key for verification & reset email |
-| `RESEND_FROM` | Sender identity, e.g. `OSS Splitwise <noreply@yourdomain>` |
+| `RESEND_FROM` | Sender identity, e.g. `SplitTab <noreply@yourdomain>` |
 | `BLOB_READ_WRITE_TOKEN` | Enables Vercel Blob receipt storage (auto-set on Vercel) |
 | `NEXT_PUBLIC_APP_URL` | Public base URL used in emailed links |
 

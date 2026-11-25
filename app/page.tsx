@@ -12,7 +12,7 @@ export default async function Home() {
       <div className="space-y-3">
         <h1 className="text-4xl font-black tracking-tight">Split expenses, <span className="text-brand">without the awkward math.</span></h1>
         <p className="mx-auto max-w-xl text-neutral-600">
-          OSS Splitwise is a free, open-source way to track shared expenses with friends and groups —
+          SplitTab is a free, open-source way to track shared expenses with friends and groups —
           dinners, trips, rent and everything in between. Everyone sees who owes whom, and settling up takes seconds.
         </p>
         <div className="flex justify-center gap-3 pt-2">

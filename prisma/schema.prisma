@@ -1,4 +1,4 @@
-// OSS Splitwise — money is ALWAYS integer cents. Exchange rates are scaled
+// SplitTab — money is ALWAYS integer cents. Exchange rates are scaled
 // integers (rate * 1_000_000). No Float/Decimal for money or rates.
 generator client {
   provider = "prisma-client"

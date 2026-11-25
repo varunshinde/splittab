@@ -1,7 +1,7 @@
 import { clsx } from "clsx";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
 import { formatMoney } from "@/lib/format";
-// shadcn/ui-style primitives (Tailwind + clsx) styled with the OSS Splitwise
+// shadcn/ui-style primitives (Tailwind + clsx) styled with the SplitTab
 // design tokens: brand teal primary, owe orange, ink text, white cards.
 
 type Variant = "primary" | "owe" | "secondary" | "ghost" | "danger";

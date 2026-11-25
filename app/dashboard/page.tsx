@@ -71,7 +71,7 @@ export default async function DashboardPage() {
 
       {isNewUser && (
         <Card className="border-brand/40 bg-brand-light p-6 text-center">
-          <h2 className="mb-1 text-lg font-bold">Welcome to OSS Splitwise, {me.name.split(" ")[0]}!</h2>
+          <h2 className="mb-1 text-lg font-bold">Welcome to SplitTab, {me.name.split(" ")[0]}!</h2>
           <p className="mx-auto mb-4 max-w-md text-sm text-neutral-600">You have no expenses yet. Add a friend by email or create a group for a trip or your home, then record your first shared expense.</p>
           <div className="flex justify-center gap-2">
             <Link href="/friends"><Button>Add your first friend</Button></Link>

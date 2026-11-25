@@ -10,7 +10,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <div className="mx-auto max-w-md py-10">
       <Card className="p-6">
         <h1 className="mb-1 text-2xl font-bold">Welcome back</h1>
-        <p className="mb-4 text-sm text-neutral-500">Log in to your OSS Splitwise account.</p>
+        <p className="mb-4 text-sm text-neutral-500">Log in to your SplitTab account.</p>
         {sp.notice && <div className="mb-3 rounded-lg border border-brand/40 bg-brand-light px-3 py-2 text-sm text-brand-dark">{sp.notice}</div>}
         {sp.error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{sp.error}</div>}
         <form action={loginAction} className="space-y-3">

@@ -49,13 +49,13 @@ function wrap(title: string, bodyHtml: string): string {
   return `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">
     <h1 style="color:#1cc29f;font-size:20px">${title}</h1>
     ${bodyHtml}
-    <p style="color:#888;font-size:12px">OSS Splitwise — if you didn't request this, you can ignore this email.</p>
+    <p style="color:#888;font-size:12px">SplitTab — if you didn't request this, you can ignore this email.</p>
   </div>`;
 }
 
 export function verificationEmailHtml(link: string): string {
   return wrap("Verify your email", `
-    <p>Welcome to OSS Splitwise! Confirm this email address to activate your account:</p>
+    <p>Welcome to SplitTab! Confirm this email address to activate your account:</p>
     <p><a href="${link}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Verify my email</a></p>
     <p>Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
     <p>This link expires in 24 hours.</p>`);
@@ -63,7 +63,7 @@ export function verificationEmailHtml(link: string): string {
 
 export function resetEmailHtml(link: string): string {
   return wrap("Reset your password", `
-    <p>We received a request to reset your OSS Splitwise password:</p>
+    <p>We received a request to reset your SplitTab password:</p>
     <p><a href="${link}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Reset my password</a></p>
     <p>Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
     <p>This link expires in 1 hour. Resetting your password signs out all your sessions.</p>`);

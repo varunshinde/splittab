@@ -28,7 +28,7 @@ async function sendVerificationEmail(userId: string, email: string) {
     data: { tokenHash: hashToken(raw), userId, expiresAt: tokenExpiry(VERIFICATION_TTL_MS) },
   });
   const link = `${getAppUrl()}/verify-email?token=${raw}`;
-  return sendEmail({ to: email, subject: "Verify your OSS Splitwise email", html: verificationEmailHtml(link) });
+  return sendEmail({ to: email, subject: "Verify your SplitTab email", html: verificationEmailHtml(link) });
 }
 
 async function sendResetEmail(userId: string, email: string) {
@@ -41,7 +41,7 @@ async function sendResetEmail(userId: string, email: string) {
     data: { tokenHash: hashToken(raw), userId, expiresAt: tokenExpiry(RESET_TTL_MS) },
   });
   const link = `${getAppUrl()}/reset-password?token=${raw}`;
-  return sendEmail({ to: email, subject: "Reset your OSS Splitwise password", html: resetEmailHtml(link) });
+  return sendEmail({ to: email, subject: "Reset your SplitTab password", html: resetEmailHtml(link) });
 }
 
 export async function signupAction(formData: FormData) {
