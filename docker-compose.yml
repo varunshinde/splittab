@@ -5,7 +5,10 @@ services:
       POSTGRES_USER: splitwise
       POSTGRES_PASSWORD: splitwise_dev_only
       POSTGRES_DB: splitwise
-    ports: ["5432:5432"]
+    # Bind to localhost only: the app reaches Postgres over the compose
+    # network, so the database never needs a public port. Publishing on all
+    # interfaces would expose a database whose password is in this repo.
+    ports: ["127.0.0.1:5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
   app:
     build: .

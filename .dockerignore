@@ -1,0 +1,10 @@
+# Keep secrets and local state out of the Docker build context: without this
+# file, `COPY . .` would bake any local .env files and the .git history into
+# the image.
+.git
+.env*
+!.env.example
+node_modules
+.next
+*.log
+.muse-github-snapshot-sync.json
