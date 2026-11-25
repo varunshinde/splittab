@@ -1,26 +1,24 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* OSS Splitwise design system (Splitwise-inspired):
+   - Brand teal  #1CC29F  primary actions, links, "you are owed"
+   - Owe orange  #FF652F  "you owe" amounts and settle-up accents
+   - Ink         #2E2E2E  primary text on white cards
+   - App bg      #F7F7F7  light gray behind white cards
+*/
+@theme {
+  --color-brand: #1cc29f;
+  --color-brand-dark: #14a585;
+  --color-brand-light: #e6f7f3;
+  --color-owe: #ff652f;
+  --color-owe-dark: #e04e1d;
+  --color-ink: #2e2e2e;
+  --color-app: #f7f7f7;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-app);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
 }

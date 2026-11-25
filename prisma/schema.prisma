@@ -9,35 +9,130 @@ datasource db {
   provider = "postgresql"
 }
 
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+
 model User {
-  id                      String         @id @default(cuid())
-  name                    String
-  email                   String         @unique
-  isPro                   Boolean        @default(false)
-  receiptStorageUsedBytes BigInt         @default(0)
-  receiptStorageQuotaBytes BigInt        @default(10737418240) // 10 GiB
-  defaultCurrency         String         @default("USD")
-  createdAt               DateTime       @default(now())
-  memberships             GroupMember[]
-  paidExpenses            Expense[]      @relation("PaidBy")
-  splits                  ExpenseSplit[]
-  assignedItems           ExpenseItem[]
-  defaultSplits           DefaultSplit[] @relation("SplitOwner")
-  defaultSplitsAsOther    DefaultSplit[] @relation("SplitOther")
-  tripPassesGranted       TripPass[]     @relation("TripPassGrantor")
-  activities              Activity[]
+  id                       String         @id @default(cuid())
+  name                     String
+  email                    String         @unique
+  // Null for placeholder ("invited by email") users until they sign up and
+  // claim the account by setting a password.
+  passwordHash             String?
+  isPlaceholder            Boolean        @default(false)
+  // Null until the user proves ownership of the email via the verification
+  // link. Login is blocked while null (for accounts with a password).
+  emailVerifiedAt          DateTime?
+  isPro                    Boolean        @default(false)
+  receiptStorageUsedBytes  BigInt         @default(0)
+  receiptStorageQuotaBytes BigInt         @default(10737418240) // 10 GiB
+  defaultCurrency          String         @default("USD")
+  createdAt                DateTime       @default(now())
+  sessions                 Session[]
+  memberships              GroupMember[]
+  paidExpenses             Expense[]      @relation("PaidBy")
+  splits                   ExpenseSplit[]
+  assignedItems            ExpenseItem[]
+  defaultSplits            DefaultSplit[] @relation("SplitOwner")
+  defaultSplitsAsOther     DefaultSplit[] @relation("SplitOther")
+  tripPassesGranted        TripPass[]     @relation("TripPassGrantor")
+  activities               Activity[]
+  friendshipsAsA           Friendship[]   @relation("FriendshipA")
+  friendshipsAsB           Friendship[]   @relation("FriendshipB")
+  verificationTokens       EmailVerificationToken[]
+  resetTokens              PasswordResetToken[]
+  settlementsSent          Settlement[]   @relation("SettlementFrom")
+  settlementsReceived      Settlement[]   @relation("SettlementTo")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  // Only the SHA-256 hash of the bearer token is stored; the raw token lives
+  // exclusively in the user's httpOnly cookie.
+  tokenHash  String   @unique
+  userId     String
+  // Absolute expiry: 30 days from creation. Idle expiry: 7 days without use
+  // (lastSeenAt is refreshed on use, throttled to one write per hour).
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Single-use, hashed email tokens. Only the SHA-256 hash of the token is
+// stored; the raw token travels in the emailed link. Verification: 24h
+// expiry. Password reset: 1h expiry, and using one revokes all sessions.
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// One row per login/signup attempt, for DB-backed rate limiting.
+// Login: 5 failures for an email within 15 minutes -> 15-minute lockout.
+// Signup: max 10 attempts per IP per hour.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  kind      String // "login" | "signup"
+  email     String
+  ip        String
+  succeeded Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email, kind, createdAt])
+  @@index([ip, kind, createdAt])
+}
+
+model Friendship {
+  id        String           @id @default(cuid())
+  // Pair is normalized: userAId < userBId (string compare) so each unordered
+  // pair can only be stored once.
+  userAId   String
+  userBId   String
+  status    FriendshipStatus @default(ACCEPTED)
+  createdAt DateTime         @default(now())
+  userA     User             @relation("FriendshipA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB     User             @relation("FriendshipB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+  @@index([userAId])
+  @@index([userBId])
 }
 
 model Group {
-  id           String        @id @default(cuid())
-  name         String
-  baseCurrency String        @default("USD")
-  createdAt    DateTime      @default(now())
-  members      GroupMember[]
-  expenses     Expense[]
+  id            String         @id @default(cuid())
+  name          String
+  type          String         @default("other") // apartment | house | trip | couple | other
+  baseCurrency  String         @default("USD")
+  createdAt     DateTime       @default(now())
+  members       GroupMember[]
+  expenses      Expense[]
+  settlements   Settlement[]
   defaultSplits DefaultSplit[]
-  tripPasses   TripPass[]
-  activities   Activity[]
+  tripPasses    TripPass[]
+  activities    Activity[]
 }
 
 model GroupMember {
@@ -52,27 +147,34 @@ model GroupMember {
 
 model Expense {
   id            String         @id @default(cuid())
-  groupId       String
+  // Null groupId = a non-group ("friend") expense; participants are defined
+  // by the ExpenseSplit rows (payer + selected friend(s)).
+  groupId       String?
   description   String
   amountInCents Int
   currency      String         @default("USD")
   paidById      String
   category      String         @default("General")
+  notes         String?
+  date          DateTime       @default(now())
   createdAt     DateTime       @default(now())
   receiptId     String?        @unique
-  group         Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group         Group?         @relation(fields: [groupId], references: [id], onDelete: Cascade)
   paidBy        User           @relation("PaidBy", fields: [paidById], references: [id])
   receipt       Receipt?       @relation(fields: [receiptId], references: [id])
   splits        ExpenseSplit[]
   items         ExpenseItem[]
+
+  @@index([groupId])
+  @@index([paidById])
 }
 
 model ExpenseSplit {
-  expenseId        String
-  userId           String
+  expenseId         String
+  userId            String
   amountOwedInCents Int
-  expense          Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
-  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expense           Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([expenseId, userId])
 }
@@ -95,6 +197,24 @@ model Receipt {
   fileSizeBytes BigInt   @default(0)
   uploadedAt    DateTime @default(now())
   expense       Expense?
+}
+
+model Settlement {
+  id            String   @id @default(cuid())
+  fromUserId    String // the payer of the settlement (the one who owed)
+  toUserId      String // the receiver
+  amountInCents Int
+  currency      String   @default("USD")
+  // Null = friend-level settlement; set = settles within that group.
+  groupId       String?
+  createdAt     DateTime @default(now())
+  fromUser      User     @relation("SettlementFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser        User     @relation("SettlementTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  group         Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([groupId])
 }
 
 model DefaultSplit {
@@ -125,22 +245,23 @@ model TripPass {
 }
 
 model CurrencyRate {
-  id              String @id @default(cuid())
-  fromCurrency    String
-  toCurrency      String
-  rateScaled      Int // rate * 1_000_000, integer only
+  id           String @id @default(cuid())
+  fromCurrency String
+  toCurrency   String
+  rateScaled   Int // rate * 1_000_000, integer only
 
   @@unique([fromCurrency, toCurrency])
 }
 
 model Activity {
   id        String   @id @default(cuid())
-  groupId   String
+  // Null groupId = non-group (friend) activity.
+  groupId   String?
   userId    String?
   type      String
   message   String
   createdAt DateTime @default(now())
-  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group     Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user      User?    @relation(fields: [userId], references: [id])
 
   @@index([groupId, createdAt])

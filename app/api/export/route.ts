@@ -1,10 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { exportData } from "@/app/actions";
-export async function GET(req: NextRequest) {
-  const userId = req.nextUrl.searchParams.get("userId");
-  if (!userId) return NextResponse.json({ error: "userId required" }, { status: 400 });
-  const data = await exportData(userId);
-  return new NextResponse(JSON.stringify(data, null, 2), {
-    headers: { "Content-Type": "application/json", "Content-Disposition": 'attachment; filename="oss-splitwise-export.json"' },
-  });
+
+// Exports the SESSION user's data only. There is deliberately no userId
+// parameter — identity comes from the session cookie (requireUser inside
+// exportData redirects/throws for anonymous callers, mapped to 401 here).
+export async function GET() {
+  try {
+    const data = await exportData();
+    return new NextResponse(JSON.stringify(data, null, 2), {
+      headers: { "Content-Type": "application/json", "Content-Disposition": 'attachment; filename="oss-splitwise-export.json"' },
+    });
+  } catch {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 }
