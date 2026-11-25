@@ -89,9 +89,12 @@ export class VercelBlobStorageProvider implements StorageProvider {
         ...(this.token ? { token: this.token } : {}),
       });
       if (!res || res.statusCode !== 200 || !res.stream) return null;
+      const reader = res.stream.getReader();
       const chunks: Buffer[] = [];
-      for await (const chunk of res.stream as AsyncIterable<Uint8Array>) {
-        chunks.push(Buffer.from(chunk));
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(Buffer.from(value));
       }
       return { body: Buffer.concat(chunks), contentType: res.blob.contentType || contentTypeFor(filePath) };
     } catch {
