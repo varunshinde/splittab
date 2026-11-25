@@ -35,6 +35,8 @@ vi.mock("../lib/mail", () => ({
   verificationEmailHtml: (link: string) => link,
   resetEmailHtml: (link: string) => link,
   existingAccountEmailHtml: () => "existing-account notice",
+  deviceCodeEmailHtml: (code: string) => code,
+  newSigninAlertEmailHtml: () => "signin-alert",
 }));
 
 import { tokenState, tokenExpiry, VERIFICATION_TTL_MS, RESET_TTL_MS } from "../lib/tokens";
@@ -169,9 +171,14 @@ run("email verification + password reset flow (DB, mail mocked)", () => {
       .rejects.toThrow(/NEXT_REDIRECT \/login\?error=/);
     const user2 = await prisma.user.findUnique({ where: { email } });
     await expect(authUtils.verifyPassword(password, user2.passwordHash)).resolves.toBe(true);
-    // Login now succeeds and mints a session.
+    // Login from this (new) device now stops at the email-code challenge;
+    // entering the emailed code trusts the device and opens the session.
     jar.clear();
-    await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/dashboard/);
+    await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/verify-device/);
+    expect(jar.get("session")).toBeUndefined();
+    const code = mail.sendEmail.mock.calls[mail.sendEmail.mock.calls.length - 1][0].html as string;
+    expect(code).toMatch(/^\d{6}$/);
+    await expect(authActions.verifyDeviceAction(form({ code, trust: "on" }))).rejects.toThrow(/NEXT_REDIRECT \/dashboard/);
     expect(jar.get("session")).toBeTruthy();
     const sessions = await prisma.session.count({ where: { userId } });
     expect(sessions).toBe(1);

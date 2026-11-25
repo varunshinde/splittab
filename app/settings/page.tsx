@@ -1,9 +1,11 @@
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { getFriends, getMyGroups } from "@/lib/data";
+import { describeDevice, deviceHashFor, locationLabel } from "@/lib/device";
 import { formatMoney } from "@/lib/format";
+import { headers } from "next/headers";
 import { setDefaultSplitForm, updateProfileForm } from "../actions";
-import { changePasswordAction } from "../auth-actions";
+import { changePasswordAction, revokeTrustedDeviceAction } from "../auth-actions";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
@@ -11,11 +13,13 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ notice?: string; error?: string }> }) {
   const me = await requireUser();
   const sp = await searchParams;
-  const [friends, groups, splits] = await Promise.all([
+  const [friends, groups, splits, devices] = await Promise.all([
     getFriends(me.id),
     getMyGroups(me.id),
     prisma.defaultSplit.findMany({ where: { userId: me.id }, include: { group: true, otherUser: true } }).catch(() => []),
+    prisma.trustedDevice.findMany({ where: { userId: me.id }, orderBy: { lastSeenAt: "desc" } }).catch(() => []),
   ]);
+  const myDeviceHash = deviceHashFor((await headers()).get("user-agent") ?? "");
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Settings</h1>
@@ -49,6 +53,38 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           <div><Label htmlFor="newPassword">New password</Label><Input id="newPassword" name="newPassword" type="password" required minLength={10} autoComplete="new-password" /></div>
           <Button type="submit" variant="secondary">Change password</Button>
         </form>
+      </Card>
+
+      <Card>
+        <h2 className="mb-1 font-semibold">Trusted devices</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Signing in from a device that isn&rsquo;t listed here requires a code we email you. You also get an
+          email alert whenever you sign in from a new device or a new location. Remove a device to make it
+          ask for a code again.
+        </p>
+        {devices.length === 0 ? (
+          <p className="text-sm text-neutral-500">No trusted devices yet — your next sign-in from each device will ask for a code once.</p>
+        ) : (
+          <div className="divide-y divide-neutral-100">
+            {devices.map((d) => (
+              <div key={d.id} className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">
+                    {describeDevice(d.userAgent)}
+                    {d.deviceHash === myDeviceHash && <span className="ml-2 rounded bg-brand-light px-1.5 py-0.5 text-xs font-semibold text-brand-dark">This device</span>}
+                  </div>
+                  <div className="truncate text-xs text-neutral-500">
+                    {locationLabel({ city: d.city, region: d.region, country: d.country })} · IP {d.ipAddress} · last seen {d.lastSeenAt.toISOString().slice(0, 10)}
+                  </div>
+                </div>
+                <form action={revokeTrustedDeviceAction}>
+                  <input type="hidden" name="deviceId" value={d.id} />
+                  <Button type="submit" variant="ghost" className="px-2 py-1.5 text-xs text-neutral-400 hover:text-red-600">Remove</Button>
+                </form>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       <Card>

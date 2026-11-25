@@ -68,6 +68,38 @@ export function existingAccountEmailHtml(): string {
     <p>If this wasn't you, you can ignore this email — your account is unchanged.</p>`);
 }
 
+export interface SigninContext {
+  deviceLabel: string;
+  location: string;
+  ip: string;
+  when: string;
+}
+
+function signinContextRows(ctx: SigninContext): string {
+  return `<table style="border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:2px 12px 2px 0;color:#888">Device</td><td>${ctx.deviceLabel}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#888">Location</td><td>${ctx.location}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#888">IP address</td><td>${ctx.ip}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#888">When</td><td>${ctx.when}</td></tr>
+  </table>`;
+}
+
+export function deviceCodeEmailHtml(code: string, ctx: SigninContext): string {
+  return wrap("Your SplitTab sign-in code", `
+    <p>Someone is signing in to your SplitTab account from a new device. If that's you, enter this code to finish signing in:</p>
+    <p style="font-size:28px;font-weight:700;letter-spacing:4px;color:#111">${code}</p>
+    ${signinContextRows(ctx)}
+    <p>The code expires in 10 minutes. If this wasn't you, do NOT share the code — your account is safe as long as the code stays secret. Consider changing your password.</p>`);
+}
+
+export function newSigninAlertEmailHtml(kind: "device" | "location", ctx: SigninContext): string {
+  const title = kind === "device" ? "New device signed in to SplitTab" : "Sign-in from a new location";
+  return wrap(title, `
+    <p>Your SplitTab account was just signed in${kind === "device" ? " from a new device" : " from a new location"}:</p>
+    ${signinContextRows(ctx)}
+    <p>If this was you, no action is needed. If it wasn't, change your password right away and remove the device under Settings → Trusted devices.</p>`);
+}
+
 export function resetEmailHtml(link: string): string {
   return wrap("Reset your password", `
     <p>We received a request to reset your SplitTab password:</p>

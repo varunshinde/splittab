@@ -6,7 +6,11 @@ import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COO
 import { DUMMY_PASSWORD_HASH, generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
 import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
-import { existingAccountEmailHtml, getAppUrl, resetEmailHtml, sendEmail, verificationEmailHtml } from "@/lib/mail";
+import { deviceCodeEmailHtml, existingAccountEmailHtml, getAppUrl, newSigninAlertEmailHtml, resetEmailHtml, sendEmail, verificationEmailHtml, type SigninContext } from "@/lib/mail";
+import {
+  challengeState, describeDevice, deviceHashFor, generateLoginCode, hashLoginCode, locationChanged,
+  locationLabel, loginCodeMatches, parseGeo, DEVICE_CHALLENGE_COOKIE, LOGIN_CODE_TTL_MS,
+} from "@/lib/device";
 import { RESET_TTL_MS, tokenExpiry, tokenState, VERIFICATION_TTL_MS } from "@/lib/tokens";
 import { capString, MAX_NAME_LEN } from "@/lib/validate";
 
@@ -142,6 +146,10 @@ export async function completeSignupAction(formData: FormData) {
   redirect(`/login?notice=${encodeURIComponent("Your account is ready — log in with your new password.")}`);
 }
 
+function signinContext(userAgent: string, geo: { city: string; region: string; country: string }, ip: string): SigninContext {
+  return { deviceLabel: describeDevice(userAgent), location: locationLabel(geo), ip, when: new Date().toUTCString() };
+}
+
 export async function loginAction(formData: FormData) {
   const hdrs = await headers();
   const ip = clientIp(hdrs);
@@ -176,8 +184,117 @@ export async function loginAction(formData: FormData) {
     redirect(`/login?error=${encodeURIComponent("Your email address isn't verified yet. We emailed you a verification link — click it, then log in. You can request a new link below.")}&unverified=1`);
   }
   await recordAttempt("login", email, ip, true); // success clears the failure counter
-  await createSession(user.id); // always a FRESH session token (no fixation)
+  // --- Device gate ---------------------------------------------------------
+  // Trusted device: proceed, but alert by email if the location changed.
+  // Untrusted device: NO session yet — email a 6-digit code; the session is
+  // created only by verifyDeviceAction after the code checks out.
+  const ua = hdrs.get("user-agent") ?? "";
+  const geo = parseGeo(hdrs);
+  const dHash = deviceHashFor(ua);
+  const trusted = await prisma.trustedDevice
+    .findUnique({ where: { userId_deviceHash: { userId: user.id, deviceHash: dHash } } })
+    .catch(() => null);
+  if (trusted) {
+    const prev = { city: trusted.city, region: trusted.region, country: trusted.country };
+    await prisma.trustedDevice.update({
+      where: { id: trusted.id },
+      data: { lastSeenAt: new Date(), ipAddress: ip, city: geo.city, region: geo.region, country: geo.country },
+    }).catch(() => {});
+    if (locationChanged(prev, geo)) {
+      await inBackground(() => sendEmail({
+        to: user.email,
+        subject: "SplitTab sign-in from a new location",
+        html: newSigninAlertEmailHtml("location", signinContext(ua, geo, ip)),
+      }));
+    }
+    await createSession(user.id); // always a FRESH session token (no fixation)
+    redirect("/dashboard");
+  }
+  if ((await checkEmailSendThrottle("device_code", email)) || (await checkEmailSendIpThrottle("device_code", ip))) {
+    backTo("/login", GENERIC_LOGIN_ERROR);
+  }
+  await prisma.loginChallenge.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } });
+  const code = generateLoginCode();
+  const challenge = await prisma.loginChallenge.create({
+    data: {
+      userId: user.id, codeHash: hashLoginCode(code), deviceHash: dHash,
+      userAgent: ua.slice(0, 300), ipAddress: ip,
+      city: geo.city, region: geo.region, country: geo.country,
+      expiresAt: new Date(Date.now() + LOGIN_CODE_TTL_MS),
+    },
+  });
+  const sent = await sendEmail({
+    to: user.email,
+    subject: "Your SplitTab sign-in code",
+    html: deviceCodeEmailHtml(code, signinContext(ua, geo, ip)),
+  });
+  if (!sent.ok) {
+    backTo("/login", "We couldn't email your sign-in code right now. Please try again in a few minutes.");
+  }
+  await recordAttempt("device_code", email, ip, true);
+  (await cookies()).set(DEVICE_CHALLENGE_COOKIE, challenge.id, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: LOGIN_CODE_TTL_MS / 1000,
+  });
+  redirect("/verify-device");
+}
+
+/** Second step of a new-device login: check the emailed code. On success
+ *  the device becomes trusted (unless the user opted out), a "new device"
+ *  alert email is sent, and the session is created. */
+export async function verifyDeviceAction(formData: FormData) {
+  const store = await cookies();
+  const challengeId = store.get(DEVICE_CHALLENGE_COOKIE)?.value;
+  const code = String(formData.get("code") ?? "");
+  const trust = formData.get("trust") !== null;
+  const expired = `/login?error=${encodeURIComponent("That sign-in code is invalid or has expired. Please log in again.")}`;
+  if (!challengeId) redirect(expired);
+  const challenge = await prisma.loginChallenge
+    .findUnique({ where: { id: challengeId }, include: { user: true } })
+    .catch(() => null);
+  if (!challenge || challengeState(challenge) !== "valid") {
+    store.delete(DEVICE_CHALLENGE_COOKIE);
+    redirect(expired);
+  }
+  if (!loginCodeMatches(code, challenge.codeHash)) {
+    await prisma.loginChallenge.update({ where: { id: challenge.id }, data: { attempts: { increment: 1 } } });
+    redirect(`/verify-device?error=${encodeURIComponent("That code doesn't match. Check the email and try again.")}`);
+  }
+  const consumed = await prisma.loginChallenge.updateMany({
+    where: { id: challenge.id, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+  if (consumed.count !== 1) redirect(expired);
+  store.delete(DEVICE_CHALLENGE_COOKIE);
+  if (trust) {
+    await prisma.trustedDevice.upsert({
+      where: { userId_deviceHash: { userId: challenge.userId, deviceHash: challenge.deviceHash } },
+      create: {
+        userId: challenge.userId, deviceHash: challenge.deviceHash, userAgent: challenge.userAgent,
+        ipAddress: challenge.ipAddress, city: challenge.city, region: challenge.region, country: challenge.country,
+      },
+      update: { lastSeenAt: new Date(), ipAddress: challenge.ipAddress, city: challenge.city, region: challenge.region, country: challenge.country },
+    });
+  }
+  const geo = { city: challenge.city, region: challenge.region, country: challenge.country };
+  await inBackground(() => sendEmail({
+    to: challenge.user.email,
+    subject: "New device signed in to SplitTab",
+    html: newSigninAlertEmailHtml("device", signinContext(challenge.userAgent, geo, challenge.ipAddress)),
+  }));
+  await createSession(challenge.userId);
   redirect("/dashboard");
+}
+
+/** Settings: forget a trusted device. Its next login will need a code. */
+export async function revokeTrustedDeviceAction(formData: FormData) {
+  const me = await requireUser();
+  const deviceId = String(formData.get("deviceId") ?? "");
+  await prisma.trustedDevice.deleteMany({ where: { id: deviceId, userId: me.id } });
+  redirect(`/settings?notice=${encodeURIComponent("Device removed. It will need a sign-in code next time it logs in.")}`);
 }
 
 /** Resend the verification email. ALWAYS answers generically (no hint

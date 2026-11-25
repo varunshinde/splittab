@@ -44,6 +44,8 @@ model User {
   friendshipsAsB           Friendship[]   @relation("FriendshipB")
   verificationTokens       EmailVerificationToken[]
   resetTokens              PasswordResetToken[]
+  trustedDevices           TrustedDevice[]
+  loginChallenges          LoginChallenge[]
   settlementsSent          Settlement[]   @relation("SettlementFrom")
   settlementsReceived      Settlement[]   @relation("SettlementTo")
 }
@@ -104,6 +106,50 @@ model LoginAttempt {
 
   @@index([email, kind, createdAt])
   @@index([ip, kind, createdAt])
+}
+
+// Trusted devices for the new-device login challenge. A device is the
+// SHA-256 of the browser's user-agent string (the raw UA is kept only for
+// display in Settings). Location fields hold the LAST seen geo (from the
+// platform's IP-geo headers); a login from a trusted device whose city or
+// country changed triggers a "new location" alert email.
+model TrustedDevice {
+  id          String   @id @default(cuid())
+  userId      String
+  deviceHash  String
+  userAgent   String
+  ipAddress   String
+  city        String
+  region      String
+  country     String
+  createdAt   DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceHash])
+  @@index([userId])
+}
+
+// A pending email-code challenge for a login from an untrusted device.
+// Only the SHA-256 of the 6-digit code is stored; 10-minute expiry, max 5
+// attempts, single-use.
+model LoginChallenge {
+  id         String    @id @default(cuid())
+  userId     String
+  codeHash   String
+  deviceHash String
+  userAgent  String
+  ipAddress  String
+  city       String
+  region     String
+  country    String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Friendship {
