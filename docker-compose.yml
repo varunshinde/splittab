@@ -1,0 +1,18 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: splitwise
+      POSTGRES_PASSWORD: splitwise_dev_only
+      POSTGRES_DB: splitwise
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://splitwise:splitwise_dev_only@db:5432/splitwise
+    ports: ["3000:3000"]
+    depends_on: [db]
+    command: sh -c "npx prisma migrate deploy || npx prisma db push; npx prisma db seed; npm run start"
+volumes:
+  pgdata:

@@ -1,0 +1,147 @@
+// OSS Splitwise — money is ALWAYS integer cents. Exchange rates are scaled
+// integers (rate * 1_000_000). No Float/Decimal for money or rates.
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                      String         @id @default(cuid())
+  name                    String
+  email                   String         @unique
+  isPro                   Boolean        @default(false)
+  receiptStorageUsedBytes BigInt         @default(0)
+  receiptStorageQuotaBytes BigInt        @default(10737418240) // 10 GiB
+  defaultCurrency         String         @default("USD")
+  createdAt               DateTime       @default(now())
+  memberships             GroupMember[]
+  paidExpenses            Expense[]      @relation("PaidBy")
+  splits                  ExpenseSplit[]
+  assignedItems           ExpenseItem[]
+  defaultSplits           DefaultSplit[] @relation("SplitOwner")
+  defaultSplitsAsOther    DefaultSplit[] @relation("SplitOther")
+  tripPassesGranted       TripPass[]     @relation("TripPassGrantor")
+  activities              Activity[]
+}
+
+model Group {
+  id           String        @id @default(cuid())
+  name         String
+  baseCurrency String        @default("USD")
+  createdAt    DateTime      @default(now())
+  members      GroupMember[]
+  expenses     Expense[]
+  defaultSplits DefaultSplit[]
+  tripPasses   TripPass[]
+  activities   Activity[]
+}
+
+model GroupMember {
+  userId   String
+  groupId  String
+  joinedAt DateTime @default(now())
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([userId, groupId])
+}
+
+model Expense {
+  id            String         @id @default(cuid())
+  groupId       String
+  description   String
+  amountInCents Int
+  currency      String         @default("USD")
+  paidById      String
+  category      String         @default("General")
+  createdAt     DateTime       @default(now())
+  receiptId     String?        @unique
+  group         Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy        User           @relation("PaidBy", fields: [paidById], references: [id])
+  receipt       Receipt?       @relation(fields: [receiptId], references: [id])
+  splits        ExpenseSplit[]
+  items         ExpenseItem[]
+}
+
+model ExpenseSplit {
+  expenseId        String
+  userId           String
+  amountOwedInCents Int
+  expense          Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([expenseId, userId])
+}
+
+model ExpenseItem {
+  id               String  @id @default(cuid())
+  expenseId        String
+  description      String
+  amountInCents    Int
+  assignedToUserId String?
+  expense          Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  assignedTo       User?   @relation(fields: [assignedToUserId], references: [id])
+
+  @@index([expenseId])
+}
+
+model Receipt {
+  id            String   @id @default(cuid())
+  filePath      String
+  fileSizeBytes BigInt   @default(0)
+  uploadedAt    DateTime @default(now())
+  expense       Expense?
+}
+
+model DefaultSplit {
+  id          String  @id @default(cuid())
+  userId      String
+  groupId     String?
+  otherUserId String?
+  percentage  Int // 0-100, owner's share percentage vs. the other user / group default
+  user        User    @relation("SplitOwner", fields: [userId], references: [id], onDelete: Cascade)
+  group       Group?  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  otherUser   User?   @relation("SplitOther", fields: [otherUserId], references: [id], onDelete: Cascade)
+}
+
+model FeatureFlag {
+  id                String @id @default(cuid())
+  key               String @unique
+  enabledForUserIds Json   @default("[]")
+}
+
+model TripPass {
+  id              String   @id @default(cuid())
+  grantedByUserId String
+  groupId         String
+  grantedAt       DateTime @default(now())
+  expiresAt       DateTime
+  grantedBy       User     @relation("TripPassGrantor", fields: [grantedByUserId], references: [id], onDelete: Cascade)
+  group           Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+}
+
+model CurrencyRate {
+  id              String @id @default(cuid())
+  fromCurrency    String
+  toCurrency      String
+  rateScaled      Int // rate * 1_000_000, integer only
+
+  @@unique([fromCurrency, toCurrency])
+}
+
+model Activity {
+  id        String   @id @default(cuid())
+  groupId   String
+  userId    String?
+  type      String
+  message   String
+  createdAt DateTime @default(now())
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([groupId, createdAt])
+}
