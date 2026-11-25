@@ -3,7 +3,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COOKIE } from "@/lib/auth";
-import { generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
+import { DUMMY_PASSWORD_HASH, generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
 import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { existingAccountEmailHtml, getAppUrl, resetEmailHtml, sendEmail, verificationEmailHtml } from "@/lib/mail";
@@ -12,6 +12,19 @@ import { capString, MAX_NAME_LEN } from "@/lib/validate";
 
 function backTo(path: string, error: string): never {
   redirect(`${path}?error=${encodeURIComponent(error)}`);
+}
+
+/** Run a task after the response is sent (Next `after()`), so response
+ *  timing doesn't reveal whether an email was actually dispatched (F3).
+ *  Outside a request scope (unit tests) `after` throws — fall back to
+ *  running inline so behavior stays testable and deterministic there. */
+async function inBackground(task: () => Promise<unknown>) {
+  try {
+    const { after } = await import("next/server");
+    after(task);
+  } catch {
+    await task().catch(() => {});
+  }
 }
 
 const GENERIC_LOGIN_ERROR = "Invalid email or password.";
@@ -148,7 +161,11 @@ export async function loginAction(formData: FormData) {
   }
   const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
   // Placeholder accounts have no password and cannot log in until claimed.
-  const ok = user && !user.isPlaceholder ? await verifyPassword(password, user.passwordHash) : false;
+  // Unknown / passwordless accounts still run a bcrypt compare against a
+  // dummy hash, so login timing doesn't reveal whether the email exists (F3).
+  const ok = user && !user.isPlaceholder && user.passwordHash
+    ? await verifyPassword(password, user.passwordHash)
+    : await verifyPassword(password, DUMMY_PASSWORD_HASH).then(() => false);
   if (!user || !ok) {
     await recordAttempt("login", email, ip, false);
     backTo("/login", GENERIC_LOGIN_ERROR);
@@ -173,8 +190,8 @@ export async function resendVerificationAction(formData: FormData) {
   if (isValidEmail(email) && !(await checkEmailSendThrottle("verify_resend", email)) && !(await checkEmailSendIpThrottle("verify_resend", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
     if (user && !user.emailVerifiedAt && !user.isPlaceholder) {
-      await sendVerificationEmail(user.id, email);
       await recordAttempt("verify_resend", email, ip, true);
+      await inBackground(() => sendVerificationEmail(user.id, email));
     }
   }
   redirect(generic);
@@ -189,8 +206,8 @@ export async function forgotPasswordAction(formData: FormData) {
   if (isValidEmail(email) && !(await checkEmailSendThrottle("password_reset", email)) && !(await checkEmailSendIpThrottle("password_reset", ip))) {
     const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
     if (user && !user.isPlaceholder) {
-      await sendResetEmail(user.id, email);
       await recordAttempt("password_reset", email, ip, true);
+      await inBackground(() => sendResetEmail(user.id, email));
     }
   }
   redirect(generic);

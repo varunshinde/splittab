@@ -1,4 +1,5 @@
 "use server";
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
@@ -10,10 +11,11 @@ import { assertCanUpload, canGrantTripPass, tripPassExpiry } from "@/lib/pro";
 import { storage } from "@/lib/storage";
 import { ocrReceipt } from "@/lib/ocr";
 import { decideAddFriend, isValidEmail, normalizeEmail, normalizePair } from "@/lib/friends";
+import { checkActionThrottle, clientIp, recordAction } from "@/lib/ratelimit";
 import { areFriends, findFriendship, getMyExpense, resolveUserByEmail } from "@/lib/data";
 import {
   assertValidUpload, capString, parseAmountCents, parseCurrency, parseDate, requireString, safeBackPath,
-  MAX_CATEGORY_LEN, MAX_DESCRIPTION_LEN, MAX_GROUP_NAME_LEN, MAX_NOTES_LEN, MAX_NAME_LEN,
+  MAX_CATEGORY_LEN, MAX_DESCRIPTION_LEN, MAX_GROUP_INVITEES, MAX_GROUP_NAME_LEN, MAX_NOTES_LEN, MAX_NAME_LEN,
 } from "@/lib/validate";
 
 // ---------------------------------------------------------------------------
@@ -40,6 +42,9 @@ async function befriend(userId: string, otherId: string) {
 
 export async function addFriendForm(formData: FormData) {
   const me = await requireUser();
+  if (await checkActionThrottle("friend_add", me.email)) {
+    redirect(`/friends?error=${encodeURIComponent("You're adding friends too quickly. Please wait a while and try again.")}`);
+  }
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const existing = await prisma.user.findUnique({ where: { email } }).catch(() => null);
   const already = existing ? await areFriends(me.id, existing.id) : false;
@@ -54,6 +59,7 @@ export async function addFriendForm(formData: FormData) {
   if (decision.kind === "already-friends") redirect(`/friends?notice=${encodeURIComponent("You are already friends with this person.")}`);
   const targetId = decision.kind === "existing-user" ? decision.userId : (await resolveUserByEmail(email)).user.id;
   await befriend(me.id, targetId);
+  await recordAction("friend_add", me.email, clientIp(await headers()));
   revalidatePath("/friends");
   redirect(`/friends?notice=${encodeURIComponent(decision.kind === "create-placeholder" ? "Friend added. They'll see the shared expenses when they sign up with this email." : "Friend added.")}`);
 }
@@ -71,6 +77,9 @@ export async function removeFriendForm(formData: FormData) {
 
 export async function createGroupForm(formData: FormData) {
   const me = await requireUser();
+  if (await checkActionThrottle("group_create", me.email)) {
+    throw new Error("you are creating groups too quickly — please wait a while");
+  }
   const name = requireString(formData.get("name"), MAX_GROUP_NAME_LEN, "group name");
   const typeRaw = String(formData.get("type") ?? "other");
   const type = ["apartment", "house", "trip", "couple", "other"].includes(typeRaw) ? typeRaw : "other";
@@ -79,6 +88,11 @@ export async function createGroupForm(formData: FormData) {
     .split(/[\s,;]+/)
     .map(normalizeEmail)
     .filter((e) => isValidEmail(e) && e !== normalizeEmail(me.email));
+  // Cap invitees per request (F3): an uncapped list lets one request mint
+  // thousands of placeholder users + friendships (DB bloat, bulk probing).
+  if (inviteEmails.length > MAX_GROUP_INVITEES) {
+    throw new Error(`at most ${MAX_GROUP_INVITEES} people can be invited at once`);
+  }
   const invitees = [];
   for (const email of inviteEmails) invitees.push((await resolveUserByEmail(email)).user);
   const group = await prisma.group.create({
@@ -89,12 +103,16 @@ export async function createGroupForm(formData: FormData) {
     },
   });
   for (const u of invitees) await befriend(me.id, u.id);
+  await recordAction("group_create", me.email, clientIp(await headers()));
   revalidatePath("/groups");
   redirect(`/groups/${group.id}`);
 }
 
 export async function addGroupMemberForm(formData: FormData) {
   const me = await requireUser();
+  if (await checkActionThrottle("group_member_add", me.email)) {
+    throw new Error("you are adding members too quickly — please wait a while");
+  }
   const groupId = String(formData.get("groupId") ?? "");
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
@@ -108,8 +126,12 @@ export async function addGroupMemberForm(formData: FormData) {
   });
   await befriend(me.id, user.id);
   await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_added", message: `${user.name} added to the group` } });
+  await recordAction("group_member_add", me.email, clientIp(await headers()));
   revalidatePath(`/groups/${groupId}`);
-  redirect(`/groups/${groupId}?tab=members&notice=${encodeURIComponent(`${user.name} added.`)}`);
+  // Non-revealing response (F3): don't confirm the real name behind an
+  // arbitrary email to the person adding it. (Co-members see names in the
+  // members list by design — that's different from an email->name oracle.)
+  redirect(`/groups/${groupId}?tab=members&notice=${encodeURIComponent("Member added.")}`);
 }
 
 // --- Expenses --------------------------------------------------------------

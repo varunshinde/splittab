@@ -8,6 +8,7 @@ export const MAX_DESCRIPTION_LEN = 200;
 export const MAX_NOTES_LEN = 1000;
 export const MAX_CATEGORY_LEN = 50;
 export const MAX_GROUP_NAME_LEN = 100;
+export const MAX_GROUP_INVITEES = 20; // per group-create request (F3: bulk-invite / DB-bloat guard)
 
 export function capString(value: unknown, max: number, label: string): string {
   const s = String(value ?? "").trim();

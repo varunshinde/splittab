@@ -130,7 +130,40 @@ export async function checkSignupThrottle(ip: string): Promise<boolean> {
   return isSignupThrottled(attempts);
 }
 
-/** Best-effort client IP from proxy headers (Vercel sets x-forwarded-for). */
+// --- Per-user action throttles (friend/group/invite actions, F3) -------------
+// Recorded in LoginAttempt rows with kind = "action:<name>" and the acting
+// user's email in the email column, so no new table is needed.
+export const ACTION_LIMITS = {
+  friend_add: { max: 20, windowMs: 60 * 60 * 1000 },
+  group_create: { max: 10, windowMs: 24 * 60 * 60 * 1000 },
+  group_member_add: { max: 30, windowMs: 60 * 60 * 1000 },
+} as const;
+export type ActionKind = keyof typeof ACTION_LIMITS;
+
+export function isActionThrottled(kind: ActionKind, attempts: AttemptLike[], now: Date = new Date()): boolean {
+  const { max, windowMs } = ACTION_LIMITS[kind];
+  const since = now.getTime() - windowMs;
+  return attempts.filter((a) => a.createdAt.getTime() > since).length >= max;
+}
+
+export async function checkActionThrottle(kind: ActionKind, userEmail: string): Promise<boolean> {
+  const { max, windowMs } = ACTION_LIMITS[kind];
+  const attempts = await prisma.loginAttempt.findMany({
+    where: { kind: `action:${kind}`, email: userEmail, createdAt: { gte: new Date(Date.now() - windowMs) } },
+    orderBy: { createdAt: "desc" },
+    take: max,
+  }).catch(() => []);
+  return isActionThrottled(kind, attempts);
+}
+
+export async function recordAction(kind: ActionKind, userEmail: string, ip: string) {
+  await recordAttempt(`action:${kind}`, userEmail, ip, true);
+}
+
+/** Best-effort client IP from proxy headers. NOTE: this trusts the left-most
+ *  X-Forwarded-For value. That is safe on Vercel (the platform overwrites the
+ *  header at the edge); behind a self-hosted proxy you must ensure the proxy
+ *  sets it, or clients can spoof it to dodge per-IP limits (F4). */
 export function clientIp(headersList: { get(name: string): string | null }): string {
   const xff = headersList.get("x-forwarded-for");
   if (xff) return xff.split(",")[0].trim().slice(0, 64);

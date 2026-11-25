@@ -43,6 +43,11 @@ export async function verifyPassword(password: string, passwordHash: string | nu
   }
 }
 
+// A real bcrypt hash (cost 12) of a random throwaway string. Login compares
+// against this when the account doesn't exist (or has no password), so the
+// response time doesn't reveal whether the email is registered (F3 timing).
+export const DUMMY_PASSWORD_HASH = "$2b$12$AfRpQgPD/cHE1H2BAONfK.nH0tFzK1C8Wawp7icej60KJcOiX2ZQW";
+
 /** 32 random bytes, base64url-encoded (43 chars). This raw token is what goes
  *  into the httpOnly cookie; it is never stored server-side. */
 export function generateSessionToken(): string {

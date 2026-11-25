@@ -4,7 +4,7 @@ import {
   sessionExpiry, isSessionExpired, isSessionDead, shouldTouchLastSeen,
   MIN_PASSWORD_LENGTH, SESSION_TTL_MS, SESSION_IDLE_MS,
 } from "../lib/auth-utils";
-import { isLockedOut, isLoginIpThrottled, isSignupThrottled, LOGIN_IP_MAX_FAILURES_PER_HOUR, LOGIN_MAX_FAILURES } from "../lib/ratelimit";
+import { isActionThrottled, isLockedOut, isLoginIpThrottled, isSignupThrottled, LOGIN_IP_MAX_FAILURES_PER_HOUR, LOGIN_MAX_FAILURES } from "../lib/ratelimit";
 import { assertValidUpload, parseAmountCents, parseCurrency, parseDate, safeBackPath } from "../lib/validate";
 
 describe("password hashing", () => {
@@ -86,6 +86,13 @@ describe("login lockout", () => {
     expect(isLoginIpThrottled(withSuccesses, now)).toBe(false);
     const old = Array.from({ length: LOGIN_IP_MAX_FAILURES_PER_HOUR }, () => ({ succeeded: false, createdAt: new Date(now.getTime() - 61 * 60000) }));
     expect(isLoginIpThrottled(old, now)).toBe(false); // outside the hour window
+  });
+  it("per-user action throttles: friend_add caps at 20/hour (F3)", () => {
+    const acts = (n: number, minAgo: number) => Array.from({ length: n }, () => ({ succeeded: true, createdAt: new Date(now.getTime() - minAgo * 60000) }));
+    expect(isActionThrottled("friend_add", acts(20, 5), now)).toBe(true);
+    expect(isActionThrottled("friend_add", acts(19, 5), now)).toBe(false);
+    expect(isActionThrottled("friend_add", acts(20, 61), now)).toBe(false); // outside window
+    expect(isActionThrottled("group_create", acts(10, 60), now)).toBe(true); // 10/day
   });
   it("signup throttle: 10 attempts per IP per hour", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ succeeded: i % 2 === 0, createdAt: new Date(now.getTime() - i * 60000) }));
