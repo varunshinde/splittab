@@ -91,6 +91,7 @@ run("email verification + password reset flow (DB, mail mocked)", () => {
   const email = `verify-${suffix}@example.com`;
   const password = "verify-pass-123";
   let userId: string;
+  let verifyLink: string;
 
   const form = (fields: Record<string, string>) => {
     const fd = new FormData();
@@ -130,6 +131,7 @@ run("email verification + password reset flow (DB, mail mocked)", () => {
     expect(mail.sendEmail).toHaveBeenCalled();
     const sentTo = mail.sendEmail.mock.calls[mail.sendEmail.mock.calls.length - 1][0].to;
     expect(sentTo).toBe(email);
+    verifyLink = lastMailLink();
     const tokens = await prisma.emailVerificationToken.findMany({ where: { userId } });
     expect(tokens).toHaveLength(1);
     expect(tokens[0].tokenHash).toMatch(/^[0-9a-f]{64}$/);
@@ -148,7 +150,7 @@ run("email verification + password reset flow (DB, mail mocked)", () => {
 
   it("verify-email consumes the token (single-use) and unblocks login", async () => {
     const { NextRequest } = await import("next/server");
-    const link = lastMailLink();
+    const link = verifyLink;
     const res = await verifyRoute.GET(new NextRequest(link));
     expect(res.headers.get("location")).toContain("notice=");
     const user = await prisma.user.findUnique({ where: { email } });
