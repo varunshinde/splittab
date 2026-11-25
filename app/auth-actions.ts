@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COOKIE } from "@/lib/auth";
 import { generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
-import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
+import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { getAppUrl, resetEmailHtml, sendEmail, verificationEmailHtml } from "@/lib/mail";
 import { RESET_TTL_MS, tokenExpiry, tokenState, VERIFICATION_TTL_MS } from "@/lib/tokens";
 import { capString, MAX_NAME_LEN } from "@/lib/validate";
@@ -102,6 +102,12 @@ export async function loginAction(formData: FormData) {
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const password = String(formData.get("password") ?? "");
 
+  // Per-IP throttle first (stops password spraying across accounts), then
+  // the per-email lockout. Both answer with the same generic error.
+  if (await checkLoginIpThrottle(ip)) {
+    await recordAttempt("login", email, ip, false);
+    backTo("/login", GENERIC_LOGIN_ERROR);
+  }
   // Lockout check BEFORE credential verification; the error stays generic so
   // the caller can't tell lockout apart from a wrong password.
   if (await checkLoginLockout(email)) {

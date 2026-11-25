@@ -4,7 +4,7 @@ import {
   sessionExpiry, isSessionExpired, isSessionDead, shouldTouchLastSeen,
   MIN_PASSWORD_LENGTH, SESSION_TTL_MS, SESSION_IDLE_MS,
 } from "../lib/auth-utils";
-import { isLockedOut, isSignupThrottled, LOGIN_MAX_FAILURES } from "../lib/ratelimit";
+import { isLockedOut, isLoginIpThrottled, isSignupThrottled, LOGIN_IP_MAX_FAILURES_PER_HOUR, LOGIN_MAX_FAILURES } from "../lib/ratelimit";
 import { assertValidUpload, parseAmountCents, parseCurrency, parseDate, safeBackPath } from "../lib/validate";
 
 describe("password hashing", () => {
@@ -77,6 +77,15 @@ describe("login lockout", () => {
   it("lockout expires 15 minutes after the last failure", () => {
     const attempts = [fail(16), fail(17), fail(18), fail(19), fail(20)];
     expect(isLockedOut(attempts, now)).toBe(false);
+  });
+  it("per-IP login throttle: trips at the hourly failure cap, successes don't count (F4)", () => {
+    const fails = Array.from({ length: LOGIN_IP_MAX_FAILURES_PER_HOUR }, (_, i) => fail(i + 1));
+    expect(isLoginIpThrottled(fails, now)).toBe(true);
+    expect(isLoginIpThrottled(fails.slice(1), now)).toBe(false);
+    const withSuccesses = [...fails.slice(0, 10), ...Array.from({ length: 40 }, (_, i) => ok(i + 1))];
+    expect(isLoginIpThrottled(withSuccesses, now)).toBe(false);
+    const old = Array.from({ length: LOGIN_IP_MAX_FAILURES_PER_HOUR }, () => ({ succeeded: false, createdAt: new Date(now.getTime() - 61 * 60000) }));
+    expect(isLoginIpThrottled(old, now)).toBe(false); // outside the hour window
   });
   it("signup throttle: 10 attempts per IP per hour", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ succeeded: i % 2 === 0, createdAt: new Date(now.getTime() - i * 60000) }));

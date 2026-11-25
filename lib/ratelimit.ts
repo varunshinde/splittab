@@ -98,6 +98,29 @@ export async function checkLoginLockout(email: string): Promise<boolean> {
   return isLockedOut(attempts);
 }
 
+// Per-IP login throttle: the per-email lockout alone lets one IP spray a
+// single password across many accounts (never tripping any single account's
+// lockout) or keep a victim's account perpetually locked. Cap FAILED logins
+// per IP per hour; successes don't count, and the "unknown" bucket (no proxy
+// headers) is exempt since unrelated users could share it.
+export const LOGIN_IP_MAX_FAILURES_PER_HOUR = 30;
+export const LOGIN_IP_WINDOW_MS = 60 * 60 * 1000;
+
+export function isLoginIpThrottled(attempts: AttemptLike[], now: Date = new Date()): boolean {
+  const since = now.getTime() - LOGIN_IP_WINDOW_MS;
+  return attempts.filter((a) => !a.succeeded && a.createdAt.getTime() > since).length >= LOGIN_IP_MAX_FAILURES_PER_HOUR;
+}
+
+export async function checkLoginIpThrottle(ip: string): Promise<boolean> {
+  if (ip === "unknown") return false;
+  const attempts = await prisma.loginAttempt.findMany({
+    where: { kind: "login", ip, succeeded: false, createdAt: { gte: new Date(Date.now() - LOGIN_IP_WINDOW_MS) } },
+    orderBy: { createdAt: "desc" },
+    take: LOGIN_IP_MAX_FAILURES_PER_HOUR,
+  }).catch(() => []);
+  return isLoginIpThrottled(attempts);
+}
+
 export async function checkSignupThrottle(ip: string): Promise<boolean> {
   const attempts = await prisma.loginAttempt.findMany({
     where: { kind: "signup", ip, createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
