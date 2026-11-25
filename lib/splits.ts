@@ -27,9 +27,15 @@ export function exactSplit(totalInCents: number, shares: SplitShare[]): SplitSha
   return shares;
 }
 
-/** Percentage split. Percentages must sum to 100. Floor each share; remainder cents go to the first participant. */
+/** Percentage split. Each percentage must be an integer 0-100 and they must
+ *  sum to 100. Floor each share; remainder cents go to the first participant. */
 export function percentageSplit(totalInCents: number, parts: { userId: string; percentage: number }[]): SplitShare[] {
   assertIntCents(totalInCents, "total");
+  for (const p of parts) {
+    if (!Number.isInteger(p.percentage) || p.percentage < 0 || p.percentage > 100) {
+      throw new Error(`each percentage must be an integer between 0 and 100 (got ${p.percentage})`);
+    }
+  }
   const pctSum = parts.reduce((a, p) => a + p.percentage, 0);
   if (pctSum !== 100) throw new Error(`percentages must sum to 100 (got ${pctSum})`);
   const shares = parts.map((p) => ({

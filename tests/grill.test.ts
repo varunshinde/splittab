@@ -48,6 +48,14 @@ describe("split validation (grill)", () => {
   it("rejects float cents", () => {
     expect(() => equalSplit(10.5, ["a"])).toThrow(/integer/);
   });
+  it("percentage shares must each be within 0-100 (F6)", () => {
+    // [200, -100] sums to 100 but would give B a negative share.
+    expect(() => percentageSplit(100, [{ userId: "a", percentage: 200 }, { userId: "b", percentage: -100 }])).toThrow(/between 0 and 100/);
+    expect(() => percentageSplit(100, [{ userId: "a", percentage: 101 }, { userId: "b", percentage: -1 }])).toThrow(/between 0 and 100/);
+    expect(() => percentageSplit(100, [{ userId: "a", percentage: 33.5 }, { userId: "b", percentage: 66.5 }])).toThrow(/between 0 and 100/);
+    // Boundary values are fine.
+    expect(percentageSplit(100, [{ userId: "a", percentage: 100 }, { userId: "b", percentage: 0 }])[1].amountOwedInCents).toBe(0);
+  });
 });
 
 describe("currency (grill)", () => {

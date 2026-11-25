@@ -3,7 +3,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COOKIE } from "@/lib/auth";
-import { generateSessionToken, hashPassword, hashToken, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
+import { generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
 import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { getAppUrl, resetEmailHtml, sendEmail, verificationEmailHtml } from "@/lib/mail";
@@ -168,8 +168,9 @@ export async function resetPasswordAction(formData: FormData) {
   if (tokenState(token) !== "valid" || !token) {
     redirect(`/reset-password?error=${encodeURIComponent("That reset link is invalid or has expired. Request a new one.")}`);
   }
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    redirect(`/reset-password?token=${encodeURIComponent(raw)}&error=${encodeURIComponent(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)}`);
+  const pwError = validateNewPassword(password);
+  if (pwError) {
+    redirect(`/reset-password?token=${encodeURIComponent(raw)}&error=${encodeURIComponent(pwError)}`);
   }
   const passwordHash = await hashPassword(password);
   await prisma.user.update({
@@ -194,8 +195,9 @@ export async function changePasswordAction(formData: FormData) {
   const next = String(formData.get("newPassword") ?? "");
   const ok = await verifyPassword(current, me.passwordHash);
   if (!ok) redirect(`/settings?error=${encodeURIComponent("Current password is incorrect.")}`);
-  if (next.length < MIN_PASSWORD_LENGTH) {
-    redirect(`/settings?error=${encodeURIComponent(`New password must be at least ${MIN_PASSWORD_LENGTH} characters.`)}`);
+  const nextError = validateNewPassword(next);
+  if (nextError) {
+    redirect(`/settings?error=${encodeURIComponent(nextError.replace(/^Password/, "New password"))}`);
   }
   const passwordHash = await hashPassword(next);
   await prisma.user.update({ where: { id: me.id }, data: { passwordHash } });

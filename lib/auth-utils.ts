@@ -7,12 +7,30 @@ import bcrypt from "bcryptjs";
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (absolute)
 export const SESSION_IDLE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (idle)
 export const MIN_PASSWORD_LENGTH = 10;
+// bcrypt silently truncates inputs past 72 BYTES, so two different passwords
+// sharing a 72-byte prefix would verify as equal. Cap there, with a clear
+// message, instead of letting the truncation happen invisibly.
+export const MAX_PASSWORD_BYTES = 72;
 const BCRYPT_ROUNDS = 12;
 
-export async function hashPassword(password: string): Promise<string> {
+export function passwordByteLength(password: string): number {
+  return new TextEncoder().encode(password).length;
+}
+
+/** Validate a candidate NEW password. Returns an error message, or null. */
+export function validateNewPassword(password: string): string | null {
   if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
-    throw new Error(`password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
   }
+  if (passwordByteLength(password) > MAX_PASSWORD_BYTES) {
+    return `Password is too long (maximum ${MAX_PASSWORD_BYTES} bytes).`;
+  }
+  return null;
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  const err = validateNewPassword(password);
+  if (err) throw new Error(err.replace(/\.$/, "").toLowerCase());
   return bcrypt.hash(password, BCRYPT_ROUNDS);
 }
 

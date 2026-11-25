@@ -19,6 +19,12 @@ describe("password hashing", () => {
     expect(MIN_PASSWORD_LENGTH).toBe(10);
     await expect(hashPassword("short")).rejects.toThrow(/at least 10/);
   });
+  it("rejects passwords past bcrypt's 72-byte truncation point (F6)", async () => {
+    await expect(hashPassword("a".repeat(73))).rejects.toThrow(/too long/);
+    // Multi-byte characters count as bytes, not characters.
+    await expect(hashPassword("é".repeat(40))).rejects.toThrow(/too long/); // 80 bytes
+    await expect(hashPassword("a".repeat(72))).resolves.toMatch(/^\$2b\$12\$/);
+  });
   it("verify fails closed on null/garbage hashes", async () => {
     await expect(verifyPassword("whatever123", null)).resolves.toBe(false);
     await expect(verifyPassword("whatever123", "not-a-hash")).resolves.toBe(false);

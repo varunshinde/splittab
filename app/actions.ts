@@ -233,7 +233,7 @@ export async function addItemForm(formData: FormData) {
   const participantIds = new Set([expense.paidById, ...expense.splits.map((s) => s.userId)]);
   const assignedToUserId = assignedRaw && participantIds.has(assignedRaw) ? assignedRaw : null;
   await prisma.expenseItem.create({
-    data: { expenseId, description: String(formData.get("description") ?? ""), amountInCents, assignedToUserId },
+    data: { expenseId, description: requireString(formData.get("description"), MAX_DESCRIPTION_LEN, "item description"), amountInCents, assignedToUserId },
   });
   revalidatePath(`/receipts/${expenseId}`);
   redirect(`/receipts/${expenseId}`);
@@ -308,7 +308,7 @@ export async function recordSettlementForm(formData: FormData) {
     if (!ok) throw new Error("you can only settle up with someone you share expenses with");
   }
   await prisma.settlement.create({
-    data: { fromUserId, toUserId, amountInCents, groupId, currency: String(formData.get("currency") ?? "USD") },
+    data: { fromUserId, toUserId, amountInCents, groupId, currency: parseCurrency(formData.get("currency")) },
   });
   const [fromUser, toUser] = await Promise.all([
     prisma.user.findUnique({ where: { id: fromUserId } }),
