@@ -6,6 +6,7 @@ import { describeDevice, deviceHashFor, locationLabel } from "@/lib/device";
 import { formatMoney } from "@/lib/format";
 import { headers } from "next/headers";
 import { setDefaultSplitForm, updateProfileForm } from "../actions";
+import { deleteAccountAction } from "../auth-actions";
 import { changePasswordAction, revokeTrustedDeviceAction } from "../auth-actions";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
@@ -105,6 +106,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <Card>
         <h2 className="font-semibold">Currency conversion</h2>
         <p className="text-sm text-neutral-500">Multi-currency expenses are converted to each group&rsquo;s base currency (and to your default currency on the dashboard) with the static rate table in lib/currency.ts. Example: {formatMoney(10000, "USD")} in an EUR group converts at the seeded rates.</p>
+      </Card>
+
+      <Card>
+        <h2 className="font-semibold text-red-700">Delete account</h2>
+        <p className="mb-2 text-sm text-neutral-500">Permanently deletes your login, sessions, and trusted devices, and anonymizes your profile. Expenses you shared stay in other people&rsquo;s ledgers under the name &ldquo;Deleted user&rdquo; — their balances would break otherwise. This cannot be undone.</p>
+        <form action={deleteAccountAction} className="flex flex-wrap items-end gap-2">
+          <div><Label>Confirm with your password</Label><Input name="current_password" type="password" required autoComplete="current-password" className="w-64" /></div>
+          <Button type="submit" className="bg-red-600 text-white hover:bg-red-700">Delete my account</Button>
+        </form>
       </Card>
     </div>
   );

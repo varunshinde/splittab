@@ -34,6 +34,7 @@ export const FLASH_MESSAGES = {
   resend_generic: "If an unverified account exists for that email, a new verification link is on its way.",
   reset_generic: "If an account exists for that email, a password reset link is on its way.",
   device_removed: "Device removed. It will need a sign-in code next time it logs in.",
+  account_deleted: "Your account has been deleted. Your shared expense history now shows 'Deleted user'.",
   profile_updated: "Profile updated.",
   already_friends: "You are already friends with this person.",
   friend_request_accepted: "Friend request accepted — you are now friends.",

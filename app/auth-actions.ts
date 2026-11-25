@@ -394,3 +394,34 @@ export async function changePasswordAction(formData: FormData) {
 export async function redirectIfAuthed() {
   if (await getCurrentUser()) redirect("/dashboard");
 }
+
+/** Delete the signed-in account (F12). The row is tombstoned rather than
+ *  hard-deleted: expenses this user paid for are part of OTHER users'
+ *  ledgers (Expense.paidBy has no cascade), so the record stays as an
+ *  anonymized "Deleted user" while identity, credentials, sessions,
+ *  trusted devices and pending challenges are wiped — the account can
+ *  never be logged into again, and the email address is freed. */
+export async function deleteAccountAction(formData: FormData) {
+  const user = await requireUser();
+  const current = String(formData.get("current_password") ?? "");
+  if (!user.passwordHash || !(await verifyPassword(current, user.passwordHash))) {
+    redirect(flashUrl("/settings", "error", "current_password_wrong"));
+  }
+  await prisma.trustedDevice.deleteMany({ where: { userId: user.id } });
+  await prisma.loginChallenge.deleteMany({ where: { userId: user.id } });
+  await prisma.emailVerificationToken.deleteMany({ where: { userId: user.id } });
+  await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+  await prisma.session.deleteMany({ where: { userId: user.id } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      name: "Deleted user",
+      email: `deleted-${user.id}@deleted.splittab.invalid`,
+      passwordHash: null,
+      emailVerifiedAt: null,
+      isPlaceholder: true,
+    },
+  });
+  await destroySession();
+  redirect(flashUrl("/login", "notice", "account_deleted"));
+}
