@@ -138,12 +138,22 @@ export async function blockUserForm(formData: FormData) {
   const me = await requireUser();
   const friendId = String(formData.get("friendId") ?? "");
   if (friendId && friendId !== me.id) {
-    const [a, b] = normalizePair(me.id, friendId);
-    await prisma.friendship.upsert({
-      where: { userAId_userBId: { userAId: a, userBId: b } },
-      create: { userAId: a, userBId: b, status: "BLOCKED", blockedById: me.id },
-      update: { status: "BLOCKED", blockedById: me.id },
-    });
+    const target = await prisma.user.findUnique({ where: { id: friendId }, select: { id: true } });
+    if (target) {
+      const existing = await findFriendship(me.id, friendId);
+      // N4: never overwrite a block the OTHER person created — a BLOCKED
+      // row already blocks both directions, and replacing blockedById
+      // would hand control of the block to the blocked party.
+      const foreignBlock = existing?.status === "BLOCKED" && existing.blockedById !== me.id;
+      if (!foreignBlock) {
+        const [a, b] = normalizePair(me.id, friendId);
+        await prisma.friendship.upsert({
+          where: { userAId_userBId: { userAId: a, userBId: b } },
+          create: { userAId: a, userBId: b, status: "BLOCKED", blockedById: me.id },
+          update: { status: "BLOCKED", blockedById: me.id },
+        });
+      }
+    }
   }
   revalidatePath("/friends");
   redirect("/friends");
@@ -153,7 +163,11 @@ export async function removeFriendForm(formData: FormData) {
   const me = await requireUser();
   const friendId = String(formData.get("friendId") ?? "");
   const friendship = await findFriendship(me.id, friendId);
-  if (friendship) await prisma.friendship.delete({ where: { id: friendship.id } });
+  // N4: a BLOCKED row belongs to whoever created the block. The blocked
+  // party must not be able to delete it (that would silently unblock
+  // themselves); only the blocker can remove it (via unblock).
+  const foreignBlock = friendship?.status === "BLOCKED" && friendship.blockedById !== me.id;
+  if (friendship && !foreignBlock) await prisma.friendship.delete({ where: { id: friendship.id } });
   revalidatePath("/friends");
   redirect("/friends");
 }
