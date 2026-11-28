@@ -83,10 +83,12 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
         {history.map((h) => h.kind === "expense" ? (
           <Card key={`e-${h.expense.id}`} className="flex items-center gap-3 py-3">
             <div className="flex-1">
-              <div className="font-medium">{h.expense.description}{h.expense.group ? <span className="ml-2 rounded bg-brand-light px-1.5 py-0.5 text-xs font-medium text-brand-dark">{h.expense.group.name}</span> : null}</div>
-              <div className="text-xs text-neutral-500">{h.expense.date.toISOString().slice(0, 10)} · {h.expense.paidById === me.id ? "You" : friend.name} paid {formatMoney(h.expense.amountInCents, h.expense.currency)}</div>
+              <div className="font-medium">{h.expense.description}{h.expense.group ? <span className="ml-2 rounded bg-brand-light px-1.5 py-0.5 text-xs font-medium text-brand-dark">{h.expense.group.name}</span> : null}{h.expense.voidedAt ? <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span> : null}</div>
+              <div className="text-xs text-neutral-500">{h.expense.date.toISOString().slice(0, 10)} · {h.expense.paidById === me.id ? "You" : friend.name} paid {formatMoney(h.expense.amountInCents, h.expense.currency)}{h.expense.voidedAt ? " · voided — no longer counts" : ""}</div>
             </div>
-            {(() => {
+            {h.expense.voidedAt ? (
+              <span className="text-sm font-medium text-neutral-400 line-through">{formatMoney(h.expense.amountInCents, h.expense.currency)}</span>
+            ) : (() => {
               const myShare = h.expense.splits.find((s) => s.userId === me.id)?.amountOwedInCents ?? 0;
               const theirShare = h.expense.splits.find((s) => s.userId === friendId)?.amountOwedInCents ?? 0;
               const delta = h.expense.paidById === me.id ? theirShare : -myShare;

@@ -9,7 +9,11 @@
 export interface BalanceExpense {
   paidById: string;
   splits: { userId: string; amountOwedInCents: number }[];
+  /** N5: a voided expense is history only — it moves no balances. */
+  voidedAt?: Date | null;
 }
+
+const active = (e: BalanceExpense) => !e.voidedAt;
 export interface BalanceSettlement {
   fromUserId: string;
   toUserId: string;
@@ -33,6 +37,7 @@ export function netBetween(
 ): number {
   let net = 0;
   for (const e of expenses) {
+    if (!active(e)) continue;
     if (e.paidById === meId) {
       const s = e.splits.find((x) => x.userId === otherId);
       if (s) net += s.amountOwedInCents;
@@ -65,6 +70,7 @@ export function pairwiseNets(
     nets.set(otherId, (nets.get(otherId) ?? 0) + delta);
   };
   for (const e of expenses) {
+    if (!active(e)) continue;
     for (const s of e.splits) {
       if (s.userId === e.paidById) continue;
       // participant owes the payer; express from meId's perspective
@@ -85,6 +91,7 @@ export function pairwiseNets(
 export function myNet(meId: string, expenses: BalanceExpense[], settlements: BalanceSettlement[] = []): number {
   let net = 0;
   for (const e of expenses) {
+    if (!active(e)) continue;
     const total = e.splits.reduce((a, s) => a + s.amountOwedInCents, 0);
     const mine = e.splits.find((s) => s.userId === meId)?.amountOwedInCents ?? 0;
     net += e.paidById === meId ? total - mine : -mine;

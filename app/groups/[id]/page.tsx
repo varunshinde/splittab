@@ -64,6 +64,7 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
 
   const byDateMap = new Map<string, number>(); const byCatMap = new Map<string, number>();
   for (const e of group.expenses) {
+    if (e.voidedAt) continue; // voided expenses don't count as spending
     const base = convertCurrency(e.amountInCents, e.currency, group.baseCurrency);
     const d = e.date.toISOString().slice(0, 10);
     byDateMap.set(d, (byDateMap.get(d) ?? 0) + base / 100);
@@ -107,8 +108,8 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
             {group.expenses.length === 0 && <Card className="p-6 text-center text-sm text-neutral-500">No expenses in this group yet — add the first one below.</Card>}
             {group.expenses.map((e) => (
               <Card key={e.id} className="py-3">
-                <div className="flex justify-between"><span className="font-medium">{e.description} <span className="text-sm font-normal text-neutral-500">({e.category})</span></span><b>{formatMoney(e.amountInCents, e.currency)}</b></div>
-                <div className="text-sm text-neutral-500">Paid by {e.paidBy.name} · {e.date.toISOString().slice(0, 10)} · splits: {e.splits.map((s) => `${nameOf(s.userId)} ${formatMoney(s.amountOwedInCents, e.currency)}`).join(", ")}</div>
+                <div className="flex justify-between"><span className="font-medium">{e.description} <span className="text-sm font-normal text-neutral-500">({e.category})</span>{e.voidedAt && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span>}</span><b className={e.voidedAt ? "text-neutral-400 line-through" : ""}>{formatMoney(e.amountInCents, e.currency)}</b></div>
+                <div className="text-sm text-neutral-500">Paid by {e.paidBy.name} · {e.date.toISOString().slice(0, 10)} · splits: {e.splits.map((s) => `${nameOf(s.userId)} ${formatMoney(s.amountOwedInCents, e.currency)}`).join(", ")}{e.voidedAt ? " · voided — no longer counts" : ""}</div>
                 {e.notes && <div className="text-sm text-neutral-500">📝 {e.notes}</div>}
                 {e.receiptId && <Link className="text-sm font-medium text-brand hover:underline" href={`/receipts/${e.id}`}>Receipt / itemize</Link>}
               </Card>

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import path from "path";
 
 // Mock @vercel/blob — no real network calls to Vercel in tests.
 vi.mock("@vercel/blob", () => ({ put: vi.fn(), del: vi.fn(), get: vi.fn() }));
@@ -56,5 +57,32 @@ describe("VercelBlobStorageProvider (mocked)", () => {
     await provider.remove("https://store.public.blob.vercel-storage.com/receipts/123-receipt.png");
     expect(mockDel).toHaveBeenCalledTimes(1);
     expect(mockDel.mock.calls[0][0]).toBe("https://store.public.blob.vercel-storage.com/receipts/123-receipt.png");
+  });
+});
+
+describe("local storage placement + removal (N10)", () => {
+  it("default base directory is NOT under public/", () => {
+    const def = new LocalStorageProvider();
+    const dir = (def as unknown as { baseDir: string }).baseDir;
+    expect(dir).not.toContain(`${path.sep}public${path.sep}`);
+    expect(path.basename(dir)).toBe("uploads");
+  });
+
+  it("save -> read -> remove round-trips, and remove deletes the file", async () => {
+    const os = await import("os");
+    const fsp = await import("fs/promises");
+    const tmp = path.join(os.tmpdir(), `splittab-storage-${Date.now()}`);
+    const provider = new LocalStorageProvider(tmp);
+    try {
+      const saved = await provider.save("receipt.png", Buffer.from("fake-png-bytes"));
+      expect(saved.fileSizeBytes).toBe(BigInt(14));
+      const readBack = await provider.read(saved.filePath);
+      expect(readBack?.body.toString()).toBe("fake-png-bytes");
+      expect(readBack?.contentType).toBe("image/png");
+      await provider.remove(saved.filePath);
+      expect(await provider.read(saved.filePath)).toBeNull();
+    } finally {
+      await fsp.rm(tmp, { recursive: true, force: true });
+    }
   });
 });

@@ -2,10 +2,11 @@
 export interface DebtTransfer { from: string; to: string; amountInCents: number }
 
 /** Net balance per user: positive = should receive, negative = owes. Payer is credited the full amount; each split debits its user. */
-export function computeBalances(expenses: { paidById: string; splits: { userId: string; amountOwedInCents: number }[] }[]): Map<string, number> {
+export function computeBalances(expenses: { paidById: string; voidedAt?: Date | null; splits: { userId: string; amountOwedInCents: number }[] }[]): Map<string, number> {
   const balances = new Map<string, number>();
   const add = (id: string, delta: number) => balances.set(id, (balances.get(id) ?? 0) + delta);
   for (const e of expenses) {
+    if (e.voidedAt) continue; // N5: voided expenses are history, not debt
     add(e.paidById, e.splits.reduce((a, s) => a + s.amountOwedInCents, 0));
     for (const s of e.splits) add(s.userId, -s.amountOwedInCents);
   }

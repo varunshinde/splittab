@@ -216,6 +216,10 @@ model Expense {
   notes         String?
   date          DateTime       @default(now())
   createdAt     DateTime       @default(now())
+  // N5: expenses are voided, never hard-deleted — the row (and its splits)
+  // stays as the audit trail but stops counting toward every balance.
+  voidedAt      DateTime?
+  voidedById    String?
   receiptId     String?        @unique
   group         Group?         @relation(fields: [groupId], references: [id], onDelete: Cascade)
   paidBy        User           @relation("PaidBy", fields: [paidById], references: [id])

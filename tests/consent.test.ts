@@ -82,10 +82,10 @@ run("F1: friend consent, expense gating, delete, block (DB)", () => {
     expect(await prisma.expense.count({ where: { paidById: userA.id } })).toBe(0);
   }, 30000);
 
-  it("after acceptance the expense works, and the OTHER participant can delete it", async () => {
+  it("after acceptance the expense works, and the OTHER participant can void it (N5: void, not hard delete)", async () => {
     asUser(tokenB);
     await expect(actions.acceptFriendForm(form({ friendId: userA.id }))).rejects.toThrow(/NEXT_REDIRECT \/friends/);
-    const row = await prisma.friendship.findFirst({ where: { status: "ACCEPTED" } });
+    const row = await prisma.friendship.findFirst({ where: { status: "ACCEPTED", OR: [{ userAId: userA.id, userBId: userB.id }, { userAId: userB.id, userBId: userA.id }] } });
     expect(row).not.toBeNull();
     asUser(tokenA);
     await expect(actions.addExpenseForm(form({
@@ -97,20 +97,24 @@ run("F1: friend consent, expense gating, delete, block (DB)", () => {
     // B is a split participant (the affected party) and may void it.
     asUser(tokenB);
     await expect(actions.deleteExpenseForm(form({ expenseId: expense.id }))).rejects.toThrow(/NEXT_REDIRECT \/dashboard/);
-    expect(await prisma.expense.findUnique({ where: { id: expense.id } })).toBeNull();
+    // N5: the row survives as voided history — it is never hard-deleted.
+    const voided = await prisma.expense.findUnique({ where: { id: expense.id } });
+    expect(voided).not.toBeNull();
+    expect(voided.voidedAt).not.toBeNull();
+    expect(voided.voidedById).toBe(userB.id);
   }, 30000);
 
   it("blocking is sticky: the blocked user cannot re-request", async () => {
     asUser(tokenA);
     await expect(actions.blockUserForm(form({ friendId: userB.id }))).rejects.toThrow(/NEXT_REDIRECT \/friends/);
-    let row = await prisma.friendship.findFirst({ where: { status: "BLOCKED" } });
+    let row = await prisma.friendship.findFirst({ where: { status: "BLOCKED", OR: [{ userAId: userA.id, userBId: userB.id }, { userAId: userB.id, userBId: userA.id }] } });
     expect(row?.blockedById).toBe(userA.id);
     asUser(tokenB);
     await expect(actions.addFriendForm(form({ email: userA.email }))).rejects.toThrow(/NEXT_REDIRECT \/friends\?notice=/);
-    row = await prisma.friendship.findFirst({ where: { status: "BLOCKED" } });
+    row = await prisma.friendship.findFirst({ where: { status: "BLOCKED", OR: [{ userAId: userA.id, userBId: userB.id }, { userAId: userB.id, userBId: userA.id }] } });
     expect(row).not.toBeNull(); // still blocked, no PENDING row was created
     expect(await prisma.friendship.count()).toBeGreaterThanOrEqual(0);
-    const anyPending = await prisma.friendship.findFirst({ where: { status: "PENDING" } });
+    const anyPending = await prisma.friendship.findFirst({ where: { status: "PENDING", OR: [{ userAId: userA.id, userBId: userB.id }, { userAId: userB.id, userBId: userA.id }] } });
     expect(anyPending).toBeNull();
   }, 30000);
 });

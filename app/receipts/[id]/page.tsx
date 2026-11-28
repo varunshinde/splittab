@@ -20,6 +20,11 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Receipt — {expense.description}</h1>
+      {expense.voidedAt && (
+        <div className="rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-600">
+          This expense was <strong>voided</strong> on {expense.voidedAt.toISOString().slice(0, 10)} — it no longer counts toward anyone&rsquo;s balances. It is kept here as history.
+        </div>
+      )}
       {expense.receipt ? (
         <p className="text-sm text-neutral-500">
           <a className="font-medium text-brand underline" href={`/api/receipts/${expense.receipt.id}`} target="_blank" rel="noreferrer">View receipt image</a>
@@ -46,14 +51,16 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
           <Button type="submit">Add item</Button>
         </form>
       </Card>
+      {!expense.voidedAt && (
       <Card>
-        <h2 className="mb-1 font-semibold">Delete this expense</h2>
-        <p className="mb-3 text-sm text-neutral-500">Removes the expense and its splits for everyone. This can&rsquo;t be undone.</p>
+        <h2 className="mb-1 font-semibold">Void this expense</h2>
+        <p className="mb-3 text-sm text-neutral-500">Voiding stops the expense counting toward balances for everyone, removes its receipt file, and records the change in activity. The expense stays visible as voided history — it is never silently erased.</p>
         <form action={deleteExpenseForm}>
           <input type="hidden" name="expenseId" value={id} />
-          <Button type="submit" variant="secondary" className="text-red-600">Delete expense</Button>
+          <Button type="submit" variant="secondary" className="text-red-600">Void expense</Button>
         </form>
       </Card>
+      )}
     </div>
   );
 }

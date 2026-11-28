@@ -414,28 +414,39 @@ export async function addGroupExpenseForm(formData: FormData) {
  *  in its splits — an affected party can always remove a debt recorded
  *  against them. Splits and items cascade; a receipt row is removed and the
  *  payer's storage counter is credited back. */
+/** Void an expense (N5, re-audit). The old hard delete let any
+ *  participant erase a debt — and the payer's receivable — without a
+ *  trace. Now the expense is VOIDED: it stays visible as history with
+ *  its splits, stops counting toward every balance, the receipt FILE
+ *  is removed from storage (N10: previously only the row went), and an
+ *  activity entry is always written — group or friend expense alike —
+ *  so the payer can see what happened. */
 export async function deleteExpenseForm(formData: FormData) {
   const me = await requireUser();
   const expenseId = String(formData.get("expenseId") ?? "");
   const expense = await getMyExpense(me.id, expenseId); // payer or participant only
   if (!expense) throw new Error("expense not found");
+  if (expense.voidedAt) throw new Error("expense already voided");
   if (expense.receipt) {
+    // Remove the stored file itself, then the row, then credit the quota.
+    await storage.remove(expense.receipt.filePath).catch(() => {});
     await prisma.receipt.delete({ where: { id: expense.receipt.id } }).catch(() => {});
-    const payer = await prisma.user.findUnique({ where: { id: expense.paidById } });
-    if (payer) {
-      const used = payer.receiptStorageUsedBytes - expense.receipt.fileSizeBytes;
-      await prisma.user.update({
-        where: { id: payer.id },
-        data: { receiptStorageUsedBytes: used > BigInt(0) ? used : BigInt(0) },
-      }).catch(() => {});
-    }
+    await prisma.user.update({
+      where: { id: expense.paidById },
+      data: { receiptStorageUsedBytes: { decrement: expense.receipt.fileSizeBytes } },
+    }).catch(() => {});
+    await prisma.user.updateMany({
+      where: { id: expense.paidById, receiptStorageUsedBytes: { lt: 0 } },
+      data: { receiptStorageUsedBytes: BigInt(0) },
+    }).catch(() => {});
   }
-  await prisma.expense.delete({ where: { id: expenseId } });
-  if (expense.groupId) {
-    await prisma.activity.create({
-      data: { groupId: expense.groupId, userId: me.id, type: "expense_deleted", message: `Expense "${expense.description}" deleted` },
-    });
-  }
+  await prisma.expense.update({
+    where: { id: expenseId },
+    data: { voidedAt: new Date(), voidedById: me.id, receiptId: null },
+  });
+  await prisma.activity.create({
+    data: { groupId: expense.groupId, userId: me.id, type: "expense_voided", message: `Expense "${expense.description}" voided by ${me.name}` },
+  });
   revalidatePath("/dashboard");
   redirect(expense.groupId ? `/groups/${expense.groupId}` : "/dashboard");
 }

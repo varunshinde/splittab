@@ -12,9 +12,10 @@ import { get, put, del } from "@vercel/blob";
 //   holds the blob URL, but it is only ever read back server-side through
 //   read() behind the authenticated /api/receipts/[id] route — the URL
 //   alone grants nothing.
-// - Local dev / Docker: LocalStorageProvider writing to public/uploads.
-//   Receipt.filePath then holds a local filesystem path, likewise only
-//   served through the authenticated route.
+// - Local dev / Docker: LocalStorageProvider writing to a top-level
+//   `uploads/` directory — deliberately OUTSIDE `public/` (N10): files
+//   under public/ can be served directly by the framework (e.g. by
+//   `next dev`), bypassing the authenticated receipt route.
 export interface StorageProvider {
   save(fileName: string, data: Buffer): Promise<{ filePath: string; fileSizeBytes: bigint }>;
   remove(filePath: string): Promise<void>;
@@ -40,7 +41,7 @@ function safeFileName(fileName: string): string {
 }
 
 export class LocalStorageProvider implements StorageProvider {
-  constructor(private baseDir = path.join(process.cwd(), "public", "uploads")) {}
+  constructor(private baseDir = path.join(process.cwd(), "uploads")) {}
   async save(fileName: string, data: Buffer) {
     await fs.mkdir(this.baseDir, { recursive: true });
     const filePath = path.join(this.baseDir, `${Date.now()}-${safeFileName(fileName)}`);

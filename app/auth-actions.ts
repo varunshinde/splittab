@@ -476,6 +476,23 @@ export async function deleteAccountAction(formData: FormData) {
   await prisma.emailVerificationToken.deleteMany({ where: { userId: user.id } });
   await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
   await prisma.session.deleteMany({ where: { userId: user.id } });
+  // N10: tombstoning the user row is not enough — the real name also
+  // lives in free-text activity messages ("X added Y to the group") and
+  // the email/IP history sits in LoginAttempt rows. Scrub both.
+  if (user.name && user.name !== "Deleted user") {
+    const named = await prisma.activity.findMany({
+      where: { message: { contains: user.name } },
+      select: { id: true, message: true },
+      take: 1000,
+    }).catch(() => []);
+    for (const a of named) {
+      await prisma.activity.update({
+        where: { id: a.id },
+        data: { message: a.message.split(user.name).join("Deleted user") },
+      }).catch(() => {});
+    }
+  }
+  await prisma.loginAttempt.deleteMany({ where: { email: user.email } }).catch(() => {});
   await prisma.user.update({
     where: { id: user.id },
     data: {

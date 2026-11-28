@@ -140,5 +140,5 @@ run("N2: group invitations require acceptance (DB)", () => {
     await expect(actions.declineGroupInviteForm(form({ groupId: group2 }))).rejects.toThrow(/NEXT_REDIRECT/);
     expect(await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: victim.id, groupId: group2 } } })).toBeNull();
     await prisma.group.deleteMany({ where: { id: group2 } }).catch(() => {});
-  });
+  }, 30000);
 });

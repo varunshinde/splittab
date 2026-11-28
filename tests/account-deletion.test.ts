@@ -53,6 +53,10 @@ d("F12 account deletion (tombstone)", () => {
     await prisma.session.create({ data: { userId, tokenHash, expiresAt: new Date(Date.now() + 3600e3) } });
     jar.set(SESSION_COOKIE, raw);
     await prisma.trustedDevice.create({ data: { userId, tokenHash: "d".repeat(64), userAgent: "test", ipAddress: "127.0.0.1", city: "Unknown", region: "Unknown", country: "Unknown" } });
+    // N10 remnants: an activity message embedding the real name, and
+    // LoginAttempt rows carrying the email/IP history.
+    await prisma.activity.create({ data: { userId, type: "member_joined", message: "Del Test joined the group" } });
+    await prisma.loginAttempt.create({ data: { kind: "login", email: EMAIL, ip: "198.51.100.99", succeeded: true } });
   });
 
   afterAll(async () => {
@@ -81,5 +85,12 @@ d("F12 account deletion (tombstone)", () => {
     expect(u.emailVerifiedAt).toBeNull();
     expect(await prisma.session.count({ where: { userId } })).toBe(0);
     expect(await prisma.trustedDevice.count({ where: { userId } })).toBe(0);
+    // N10: the real name is scrubbed from free-text activity messages,
+    // and the LoginAttempt history for the email is purged.
+    const acts = await prisma.activity.findMany({ where: { userId } });
+    expect(acts.length).toBeGreaterThan(0);
+    for (const a of acts) expect(a.message).not.toContain("Del Test");
+    expect(acts[0].message).toContain("Deleted user");
+    expect(await prisma.loginAttempt.count({ where: { email: EMAIL } })).toBe(0);
   });
 });
