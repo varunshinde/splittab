@@ -54,3 +54,41 @@ export function computeSplit(totalInCents: number, mode: "equal" | "exact" | "pe
   if (mode === "exact") return exactSplit(totalInCents, payload as SplitShare[]);
   return percentageSplit(totalInCents, payload as { userId: string; percentage: number }[]);
 }
+
+/**
+ * Itemization v2: derive an expense's splits from its receipt items.
+ * Each item is split equally among its assignees (empty assignees = all
+ * participants). Whatever the items don't cover — tax, tip, extras — is
+ * split equally among ALL participants. Returns one share per participant
+ * (zeros included, so nobody loses participant status). Throws when the
+ * items total more than the expense total.
+ */
+export function itemizedSplits(
+  totalInCents: number,
+  items: { amountInCents: number; assignedToUserIds: string[] }[],
+  participantIds: string[],
+): SplitShare[] {
+  assertIntCents(totalInCents, "total");
+  if (participantIds.length === 0) throw new Error("at least one participant is required");
+  const owed = new Map<string, number>(participantIds.map((id) => [id, 0]));
+  let itemized = 0;
+  for (const item of items) {
+    assertIntCents(item.amountInCents, "item amount");
+    itemized += item.amountInCents;
+    const targets = item.assignedToUserIds.filter((id) => owed.has(id));
+    const splitAmong = targets.length > 0 ? targets : participantIds;
+    for (const s of equalSplit(item.amountInCents, splitAmong)) {
+      owed.set(s.userId, (owed.get(s.userId) ?? 0) + s.amountOwedInCents);
+    }
+  }
+  if (itemized > totalInCents) {
+    throw new Error(`items total (${itemized}) exceeds the expense total (${totalInCents})`);
+  }
+  const remainder = totalInCents - itemized;
+  if (remainder > 0) {
+    for (const s of equalSplit(remainder, participantIds)) {
+      owed.set(s.userId, (owed.get(s.userId) ?? 0) + s.amountOwedInCents);
+    }
+  }
+  return participantIds.map((userId) => ({ userId, amountOwedInCents: owed.get(userId) ?? 0 }));
+}

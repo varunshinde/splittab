@@ -26,6 +26,8 @@ export const FLASH_MESSAGES = {
   own_email: "That's your own email address.",
   member_email_invalid: "Enter someone else's valid email.",
   pick_participant: "Pick at least one person to split with.",
+  items_exceed_total: "Your items add up to more than the expense total. Fix the item amounts first.",
+  receipt_missing: "Choose a receipt photo or file first.",
   // --- notices ---
   signup_check_email: "Check your email — we sent you a link to finish setting up your account. If you already have an account, you can just log in.",
   account_ready: "Your account is ready — log in with your new password.",
@@ -47,6 +49,8 @@ export const FLASH_MESSAGES = {
   settlement_void_requested: "Void requested — the settlement keeps counting until the other person agrees to void it.",
   member_previously_declined: "That person has already declined an invitation to this group.",
   settlement_void_declined: "Void request declined — the settlement stays confirmed and keeps counting.",
+  itemization_applied: "Itemized split applied — everyone's share now follows the receipt items.",
+  receipt_uploaded: "Receipt saved. You can itemize it below.",
 } as const;
 
 export type FlashCode = keyof typeof FLASH_MESSAGES;

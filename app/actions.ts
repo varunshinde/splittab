@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { computeSplit } from "@/lib/splits";
+import { computeSplit, itemizedSplits } from "@/lib/splits";
 import { netBetween } from "@/lib/balances";
 import { assertCanUpload, canGrantTripPass, tripPassExpiry } from "@/lib/pro";
 import { storage } from "@/lib/storage";
@@ -517,14 +517,87 @@ export async function addItemForm(formData: FormData) {
   if (expense.voidedAt) throw new Error("expense is voided");
   const amountInCents = Math.round(parseFloat(String(formData.get("amount") ?? "")) * 100);
   if (!Number.isInteger(amountInCents) || amountInCents < 0) throw new Error("item amount must be integer cents >= 0");
-  const assignedRaw = String(formData.get("assignedToUserId") ?? "");
   const participantIds = new Set([expense.paidById, ...expense.splits.map((s) => s.userId)]);
-  const assignedToUserId = assignedRaw && participantIds.has(assignedRaw) ? assignedRaw : null;
+  // Itemization v2: an item may be shared by a SUBSET of participants
+  // (checkboxes named assignedToUserIds). None checked = everyone shares
+  // it. The legacy single-select (assignedToUserId) still works.
+  const multi = formData.getAll("assignedToUserIds").map(String).filter((uid) => participantIds.has(uid));
+  const legacy = String(formData.get("assignedToUserId") ?? "");
+  const assignedToUserIds = [...new Set(multi.length > 0 ? multi : legacy && participantIds.has(legacy) ? [legacy] : [])];
   await prisma.expenseItem.create({
-    data: { expenseId, description: requireString(formData.get("description"), MAX_DESCRIPTION_LEN, "item description"), amountInCents, assignedToUserId },
+    data: {
+      expenseId,
+      description: requireString(formData.get("description"), MAX_DESCRIPTION_LEN, "item description"),
+      amountInCents,
+      assignedToUserIds,
+      assignedToUserId: assignedToUserIds.length === 1 ? assignedToUserIds[0] : null,
+    },
   });
   revalidatePath(`/receipts/${expenseId}`);
   redirect(`/receipts/${expenseId}`);
+}
+
+export async function deleteItemForm(formData: FormData) {
+  const me = await requireUser();
+  const expenseId = String(formData.get("expenseId") ?? "");
+  const itemId = String(formData.get("itemId") ?? "");
+  const expense = await getMyExpense(me.id, expenseId);
+  if (!expense) throw new Error("expense not found");
+  if (expense.voidedAt) throw new Error("expense is voided");
+  await prisma.expenseItem.deleteMany({ where: { id: itemId, expenseId } });
+  revalidatePath(`/receipts/${expenseId}`);
+  redirect(`/receipts/${expenseId}`);
+}
+
+/**
+ * Itemization v2: make the receipt items DRIVE the expense's splits.
+ * Payer only (the receipt is the payer's evidence, R5). Each item splits
+ * among its assignees (everyone when unassigned); the un-itemized rest
+ * (tax, tip, extras) splits equally among all participants. Replaces the
+ * split rows in one transaction and records the change in activity.
+ */
+export async function applyItemizationForm(formData: FormData) {
+  const me = await requireUser();
+  const expenseId = String(formData.get("expenseId") ?? "");
+  const expense = await getMyExpense(me.id, expenseId);
+  if (!expense) throw new Error("expense not found");
+  if (expense.voidedAt) throw new Error("expense is voided");
+  if (expense.paidById !== me.id) throw new Error("only the payer can apply itemization");
+  if (expense.items.length === 0) throw new Error("no items to apply");
+  const participantIds = [expense.paidById, ...expense.splits.map((s) => s.userId).filter((uid) => uid !== expense.paidById)];
+  const items = expense.items.map((it) => ({
+    amountInCents: it.amountInCents,
+    assignedToUserIds: it.assignedToUserIds.length > 0 ? it.assignedToUserIds : it.assignedToUserId ? [it.assignedToUserId] : [],
+  }));
+  let shares;
+  try {
+    shares = itemizedSplits(expense.amountInCents, items, participantIds);
+  } catch {
+    redirect(flashUrl(`/receipts/${expenseId}`, "error", "items_exceed_total"));
+  }
+  await prisma.$transaction([
+    prisma.expenseSplit.deleteMany({ where: { expenseId } }),
+    prisma.expenseSplit.createMany({ data: shares!.map((s) => ({ expenseId, userId: s.userId, amountOwedInCents: s.amountOwedInCents })) }),
+  ]);
+  await prisma.activity.create({
+    data: { groupId: expense.groupId, userId: me.id, type: "expense_itemized", subjectId: expense.paidById, message: `Itemized split applied to "${expense.description}"`, data: { description: expense.description } },
+  });
+  revalidatePath("/dashboard");
+  redirect(flashUrl(`/receipts/${expenseId}`, "notice", "itemization_applied"));
+}
+
+/** Form wrapper around uploadReceipt for the receipt page's file input
+ *  (server actions can't take a Buffer from the browser; FormData can). */
+export async function uploadReceiptForm(formData: FormData) {
+  const expenseId = String(formData.get("expenseId") ?? "");
+  const file = formData.get("receipt");
+  if (!(file instanceof File) || file.size === 0) {
+    redirect(flashUrl(`/receipts/${expenseId}`, "error", "receipt_missing"));
+  }
+  const data = Buffer.from(await (file as File).arrayBuffer());
+  await uploadReceipt(expenseId, (file as File).name, data, (file as File).type);
+  revalidatePath(`/receipts/${expenseId}`);
+  redirect(flashUrl(`/receipts/${expenseId}`, "notice", "receipt_uploaded"));
 }
 
 /** Upload a receipt at full resolution via the StorageProvider; enforces the

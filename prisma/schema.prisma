@@ -258,6 +258,11 @@ model ExpenseItem {
   description      String
   amountInCents    Int
   assignedToUserId String?
+  /** Itemization v2: an item can be shared by a SUBSET of participants.
+   *  Empty = shared by everyone (same as unassigned). assignedToUserId is
+   *  kept for pre-v2 rows (backfilled into this array) and set when the
+   *  array has exactly one person. */
+  assignedToUserIds String[] @default([])
   expense          Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   assignedTo       User?   @relation(fields: [assignedToUserId], references: [id])
 
