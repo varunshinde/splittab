@@ -135,6 +135,20 @@ export async function checkLoginEmailBackstop(email: string): Promise<boolean> {
   return Date.now() - lastFailureAt < LOGIN_LOCKOUT_MS;
 }
 
+// R8: the Settings current-password checks (change password, delete
+// account) verify the password with no limit of their own — after a
+// session theft that is an offline-speed guessing oracle against the
+// account password. Reuse the login lockout shape (5 failures, then a
+// 15-minute lock) keyed on the account's email under its own kind.
+export async function checkSettingsPwLockout(email: string): Promise<boolean> {
+  const attempts = await prisma.loginAttempt.findMany({
+    where: { kind: "settings_pw", email, createdAt: { gte: new Date(Date.now() - LOGIN_WINDOW_MS - LOGIN_LOCKOUT_MS) } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  }).catch(() => []);
+  return isLockedOut(attempts);
+}
+
 // Per-IP login throttle: the per-email lockout alone lets one IP spray a
 // single password across many accounts (never tripping any single account's
 // lockout) or keep a victim's account perpetually locked. Cap FAILED logins

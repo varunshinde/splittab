@@ -192,12 +192,13 @@ export async function createGroupForm(formData: FormData) {
   if (inviteEmails.length > MAX_GROUP_INVITEES) {
     throw new Error(`at most ${MAX_GROUP_INVITEES} people can be invited at once`);
   }
-  const invitees = [];
+  const invitees: { user: Awaited<ReturnType<typeof resolveUserByEmail>>["user"]; suppressed: boolean }[] = [];
   for (const email of inviteEmails) {
     const u = (await resolveUserByEmail(email)).user;
-    // Someone who blocked me is silently left out (F1): no membership, no
-    // friendship, and the response doesn't reveal it.
-    if (!(await blockedBy(me.id, u.id))) invitees.push(u);
+    // Someone who blocked me (F1): no membership, no friendship. R11:
+    // they still get a (suppressed) invitation row, so the group looks
+    // exactly as if they were simply invited — the block stays hidden.
+    invitees.push({ user: u, suppressed: await blockedBy(me.id, u.id) });
   }
   // N2: invitees start as INVITED — membership (and friendship) begins
   // only when they accept. Until then they see an invitation, accrue no
@@ -208,7 +209,7 @@ export async function createGroupForm(formData: FormData) {
       members: {
         create: [
           { userId: me.id, status: "MEMBER" },
-          ...[...new Set(invitees.map((u) => u.id))].map((userId) => ({ userId, status: "INVITED" as const, invitedById: me.id })),
+          ...[...new Map(invitees.map((i) => [i.user.id, i])).values()].map((i) => ({ userId: i.user.id, status: "INVITED" as const, invitedById: me.id, inviteSuppressed: i.suppressed })),
         ],
       },
       activities: { create: { userId: me.id, type: "group_created", message: `Group "${name}" created`, data: {} } },
@@ -230,8 +231,23 @@ export async function addGroupMemberForm(formData: FormData) {
   if (!membership || membership.status !== "MEMBER") throw new Error("you are not a member of this group");
   if (!isValidEmail(email) || email === normalizeEmail(me.email)) redirect(flashUrl(`/groups/${groupId}?tab=members`, "error", "member_email_invalid"));
   const { user } = await resolveUserByEmail(email);
+  // R10: a previous DECLINE of this group is final — no re-invites.
+  const prior = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: user.id, groupId } } });
+  if (prior?.status === "DECLINED") {
+    redirect(flashUrl(`/groups/${groupId}?tab=members`, "error", "member_previously_declined"));
+  }
   if (await blockedBy(me.id, user.id)) {
-    // They blocked me: silently do nothing, same outward response (F1).
+    // They blocked me. R11: previously the invite silently vanished and
+    // the members list showed nothing — which told the inviter they
+    // were blocked. Now a suppressed invitation is recorded: it looks
+    // exactly like a pending invite to the inviter and the group, but
+    // it is never surfaced to the invitee anywhere.
+    await prisma.groupMember.upsert({
+      where: { userId_groupId: { userId: user.id, groupId } },
+      create: { userId: user.id, groupId, status: "INVITED", invitedById: me.id, inviteSuppressed: true },
+      update: {},
+    });
+    await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_invited", subjectId: user.id, message: "A new member was invited to the group", data: {} } });
     redirect(flashUrl(`/groups/${groupId}?tab=members`, "notice", "member_added"));
   }
   // N2: an invitation, not instant membership. The friendship is created
@@ -259,7 +275,7 @@ export async function acceptGroupInviteForm(formData: FormData) {
   const me = await requireUser();
   const groupId = String(formData.get("groupId") ?? "");
   const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
-  if (!membership || membership.status !== "INVITED") throw new Error("no pending invitation for this group");
+  if (!membership || membership.status !== "INVITED" || membership.inviteSuppressed) throw new Error("no pending invitation for this group");
   await prisma.groupMember.update({
     where: { userId_groupId: { userId: me.id, groupId } },
     data: { status: "MEMBER", joinedAt: new Date() },
@@ -273,12 +289,17 @@ export async function acceptGroupInviteForm(formData: FormData) {
   redirect(`/groups/${groupId}`);
 }
 
-/** Decline a group invitation (N2): the invitation row is removed and
- *  nothing else about me changes — no membership, no friendship, no debt. */
+/** Decline a group invitation (N2 + R10): the row is kept as DECLINED —
+ *  no membership, no friendship, no debt — and the group cannot be
+ *  re-offered to me by re-inviting (addGroupMemberForm refuses). Before
+ *  R10 the row was deleted, so an inviter could re-invite endlessly. */
 export async function declineGroupInviteForm(formData: FormData) {
   const me = await requireUser();
   const groupId = String(formData.get("groupId") ?? "");
-  await prisma.groupMember.deleteMany({ where: { userId: me.id, groupId, status: "INVITED" } });
+  await prisma.groupMember.updateMany({
+    where: { userId: me.id, groupId, status: "INVITED", inviteSuppressed: false },
+    data: { status: "DECLINED" },
+  });
   revalidatePath("/dashboard");
   redirect("/dashboard");
 }
@@ -333,6 +354,21 @@ async function createExpense(meId: string, input: CreateExpenseInput) {
   }
   for (const id of [...input.participantIds, input.paidById]) {
     if (!allowedIds.has(id)) throw new Error("participant is not in scope for this expense");
+  }
+  if (!input.groupId) {
+    // R11: in friend mode, two of MY friends who are not friends with
+    // EACH OTHER must not end up in a shared ledger — the expense would
+    // show each of them the other's name and balances. Multi-party
+    // splits among non-friends belong in a group, where membership is
+    // the consent.
+    const others = [...new Set([...input.participantIds, input.paidById])].filter((id) => id !== meId);
+    for (let i = 0; i < others.length; i++) {
+      for (let j = i + 1; j < others.length; j++) {
+        if (!(await areFriends(others[i], others[j]))) {
+          throw new Error("in a friend expense, everyone besides you must also be friends with each other — use a group instead");
+        }
+      }
+    }
   }
   const splits = computeSplit(input.amountInCents, "equal", [...new Set(input.participantIds)]);
   const expense = await prisma.expense.create({

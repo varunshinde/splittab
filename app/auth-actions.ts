@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COOKIE } from "@/lib/auth";
 import { DUMMY_PASSWORD_HASH, generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
-import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginEmailBackstop, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
+import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginEmailBackstop, checkLoginIpThrottle, checkLoginLockout, checkSettingsPwLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { deviceCodeEmailHtml, existingAccountEmailHtml, getAppUrl, newSigninAlertEmailHtml, resetEmailHtml, sendEmail, verificationEmailHtml, type SigninContext } from "@/lib/mail";
 import {
   challengeState, describeDevice, deviceTrustExpiry, generateDeviceToken, generateLoginCode, hashDeviceToken, hashLoginCode, locationChanged,
@@ -444,7 +444,13 @@ export async function changePasswordAction(formData: FormData) {
   const me = await requireUser();
   const current = String(formData.get("currentPassword") ?? "");
   const next = String(formData.get("newPassword") ?? "");
+  // R8: throttle current-password guesses in Settings like logins.
+  const ip = clientIp(await headers());
+  if (await checkSettingsPwLockout(me.email)) {
+    redirect(flashUrl("/settings", "error", "too_many_attempts"));
+  }
   const ok = await verifyPassword(current, me.passwordHash);
+  await recordAttempt("settings_pw", me.email, ip, ok);
   if (!ok) redirect(flashUrl("/settings", "error", "current_password_wrong"));
   const nextError = validateNewPassword(next);
   if (nextError) {
@@ -478,7 +484,15 @@ export async function redirectIfAuthed() {
 export async function deleteAccountAction(formData: FormData) {
   const user = await requireUser();
   const current = String(formData.get("current_password") ?? "");
-  if (!user.passwordHash || !(await verifyPassword(current, user.passwordHash))) {
+  // R8: same throttle as change-password — deletion is the most
+  // destructive guess target in Settings.
+  const ip = clientIp(await headers());
+  if (await checkSettingsPwLockout(user.email)) {
+    redirect(flashUrl("/settings", "error", "too_many_attempts"));
+  }
+  const pwOk = !!user.passwordHash && (await verifyPassword(current, user.passwordHash));
+  await recordAttempt("settings_pw", user.email, ip, pwOk);
+  if (!pwOk) {
     redirect(flashUrl("/settings", "error", "current_password_wrong"));
   }
   await prisma.trustedDevice.deleteMany({ where: { userId: user.id } });

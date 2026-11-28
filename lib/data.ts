@@ -95,7 +95,8 @@ export async function getMyGroups(userId: string) {
 /** Groups I have been invited to but have not accepted yet (N2). */
 export async function getGroupInvitations(userId: string) {
   const rows = await prisma.groupMember.findMany({
-    where: { userId, status: "INVITED" },
+    // R11: suppressed invitations (blocked inviter) are never surfaced.
+    where: { userId, status: "INVITED", inviteSuppressed: false },
     include: { group: true },
     orderBy: { joinedAt: "desc" },
   });
@@ -104,13 +105,16 @@ export async function getGroupInvitations(userId: string) {
     ? await prisma.user.findMany({ where: { id: { in: inviterIds } }, select: { id: true, name: true } })
     : [];
   const nameOf = new Map(inviters.map((u) => [u.id, u.name]));
-  return rows.map((r) => ({ group: r.group, invitedByName: r.invitedById ? nameOf.get(r.invitedById) ?? null : null }));
+  return rows.map((r) => ({ group: r.group, invitedById: r.invitedById, invitedByName: r.invitedById ? nameOf.get(r.invitedById) ?? null : null }));
 }
 
 /** A group only if I am a member — otherwise null (callers 404). */
 export async function getMyGroup(userId: string, groupId: string) {
   return prisma.group.findFirst({
-    where: { id: groupId, members: { some: { userId } } },
+    // R10/R11: a DECLINED or suppressed membership confers no access —
+    // the group page must 404 for those rows exactly as if the row did
+    // not exist (which is what declining used to mean).
+    where: { id: groupId, members: { some: { userId, OR: [{ status: "MEMBER" }, { status: "INVITED", inviteSuppressed: false }] } } },
     include: {
       members: { include: { user: true } },
       expenses: { include: { splits: true, paidBy: true, items: true }, orderBy: { date: "desc" } },
