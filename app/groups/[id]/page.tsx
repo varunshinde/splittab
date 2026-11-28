@@ -7,7 +7,7 @@ import { formatMoney } from "@/lib/format";
 import { computeBalances, computeSimplifiedDebts } from "@/lib/debt";
 import { convertCurrency } from "@/lib/currency";
 import { hasProAccess } from "@/lib/pro";
-import { acceptGroupInviteForm, addGroupExpenseForm, addGroupMemberForm, declineGroupInviteForm, grantTripPassForm, leaveGroupForm, recordSettlementForm } from "../../actions";
+import { acceptGroupInviteForm, addGroupExpenseForm, addGroupMemberForm, confirmSettlementForm, declineGroupInviteForm, grantTripPassForm, leaveGroupForm, recordSettlementForm, rejectSettlementForm, voidSettlementForm } from "../../actions";
 import { SpendingCharts } from "@/components/Charts";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
@@ -51,8 +51,10 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
   }
 
   const balances = computeBalances(group.expenses);
-  // Apply this group's recorded settlements on top of expense balances.
+  // Apply this group's CONFIRMED settlements on top of expense balances
+  // (N3: pending settlements move nothing until the other party confirms).
   for (const s of group.settlements) {
+    if (s.status !== "CONFIRMED") continue;
     balances.set(s.fromUserId, (balances.get(s.fromUserId) ?? 0) + s.amountInCents);
     balances.set(s.toUserId, (balances.get(s.toUserId) ?? 0) - s.amountInCents);
   }
@@ -179,7 +181,33 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
             <div className="mt-3 border-t border-neutral-100 pt-3">
               <h3 className="mb-1 text-sm font-semibold">Recorded payments</h3>
               {group.settlements.map((s) => (
-                <div key={s.id} className="py-1 text-sm text-neutral-600">{s.fromUser.name} paid {s.toUser.name} <b>{formatMoney(s.amountInCents, s.currency)}</b> · {s.createdAt.toISOString().slice(0, 10)}</div>
+                <div key={s.id} className="flex flex-wrap items-center gap-2 py-1 text-sm text-neutral-600">
+                  <span className="flex-1">{s.fromUser.name} paid {s.toUser.name} <b>{formatMoney(s.amountInCents, s.currency)}</b> · {s.createdAt.toISOString().slice(0, 10)}
+                    {s.status === "PENDING" && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">Pending confirmation</span>}
+                    {s.status === "VOIDED" && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span>}
+                  </span>
+                  {s.status === "PENDING" && s.recordedById !== me.id && (s.fromUserId === me.id || s.toUserId === me.id) && (
+                    <>
+                      <form action={confirmSettlementForm}>
+                        <input type="hidden" name="settlementId" value={s.id} />
+                        <input type="hidden" name="back" value={`/groups/${id}?tab=balances`} />
+                        <Button type="submit" className="px-2.5 py-1 text-xs">Confirm</Button>
+                      </form>
+                      <form action={rejectSettlementForm}>
+                        <input type="hidden" name="settlementId" value={s.id} />
+                        <input type="hidden" name="back" value={`/groups/${id}?tab=balances`} />
+                        <Button type="submit" variant="secondary" className="px-2.5 py-1 text-xs">Reject</Button>
+                      </form>
+                    </>
+                  )}
+                  {((s.status === "PENDING" && s.recordedById === me.id) || s.status === "CONFIRMED") && (s.fromUserId === me.id || s.toUserId === me.id) && (
+                    <form action={voidSettlementForm}>
+                      <input type="hidden" name="settlementId" value={s.id} />
+                      <input type="hidden" name="back" value={`/groups/${id}?tab=balances`} />
+                      <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400 hover:text-red-600">{s.status === "PENDING" ? "Cancel entry" : "Void"}</Button>
+                    </form>
+                  )}
+                </div>
               ))}
             </div>
           )}

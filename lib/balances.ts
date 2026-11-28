@@ -14,7 +14,12 @@ export interface BalanceSettlement {
   fromUserId: string;
   toUserId: string;
   amountInCents: number;
+  /** N3: only CONFIRMED settlements move balances. Absent = legacy row
+   *  created before confirmation existed, which counts. */
+  status?: string;
 }
+
+const counts = (s: BalanceSettlement) => !s.status || s.status === "CONFIRMED";
 
 /**
  * Net amount `otherId` owes `meId`, in cents. Positive = they owe me,
@@ -37,6 +42,7 @@ export function netBetween(
     }
   }
   for (const s of settlements) {
+    if (!counts(s)) continue;
     if (s.fromUserId === meId && s.toUserId === otherId) net += s.amountInCents;
     else if (s.fromUserId === otherId && s.toUserId === meId) net -= s.amountInCents;
   }
@@ -67,6 +73,7 @@ export function pairwiseNets(
     }
   }
   for (const s of settlements) {
+    if (!counts(s)) continue;
     if (s.fromUserId === meId) bump(s.toUserId, s.amountInCents);
     else if (s.toUserId === meId) bump(s.fromUserId, -s.amountInCents);
   }
@@ -83,6 +90,7 @@ export function myNet(meId: string, expenses: BalanceExpense[], settlements: Bal
     net += e.paidById === meId ? total - mine : -mine;
   }
   for (const s of settlements) {
+    if (!counts(s)) continue;
     if (s.fromUserId === meId) net += s.amountInCents;
     if (s.toUserId === meId) net -= s.amountInCents;
   }

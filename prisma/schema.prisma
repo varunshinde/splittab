@@ -257,15 +257,26 @@ model Receipt {
   expense       Expense?
 }
 
+enum SettlementStatus {
+  PENDING
+  CONFIRMED
+  VOIDED
+}
+
 model Settlement {
-  id            String   @id @default(cuid())
+  id            String           @id @default(cuid())
   fromUserId    String // the payer of the settlement (the one who owed)
   toUserId      String // the receiver
   amountInCents Int
-  currency      String   @default("USD")
+  currency      String           @default("USD")
+  // N3: a settlement counts toward balances only once the OTHER party
+  // confirms it. Existing rows predate confirmation and keep counting
+  // (hence the CONFIRMED default); new rows are created PENDING.
+  status        SettlementStatus @default(CONFIRMED)
+  recordedById  String? // who entered it; the other party must confirm
   // Null = friend-level settlement; set = settles within that group.
   groupId       String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime         @default(now())
   fromUser      User     @relation("SettlementFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
   toUser        User     @relation("SettlementTo", fields: [toUserId], references: [id], onDelete: Cascade)
   group         Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)

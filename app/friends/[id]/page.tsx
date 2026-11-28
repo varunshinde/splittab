@@ -6,7 +6,7 @@ import { requireUser } from "@/lib/auth";
 import { findFriendship } from "@/lib/data";
 import { netBetween } from "@/lib/balances";
 import { formatMoney } from "@/lib/format";
-import { settleFriendForm } from "../../actions";
+import { confirmSettlementForm, rejectSettlementForm, settleFriendForm, voidSettlementForm } from "../../actions";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
@@ -99,10 +99,42 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
         ) : (
           <Card key={`s-${h.settlement.id}`} className="flex items-center gap-3 py-3">
             <div className="flex-1">
-              <div className="font-medium">Settlement</div>
-              <div className="text-xs text-neutral-500">{h.settlement.createdAt.toISOString().slice(0, 10)} · {h.settlement.fromUserId === me.id ? "You" : friend.name} paid {h.settlement.toUserId === me.id ? "you" : friend.name}</div>
+              <div className="font-medium">
+                Settlement
+                {h.settlement.status === "PENDING" && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">Pending confirmation</span>}
+                {h.settlement.status === "VOIDED" && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span>}
+              </div>
+              <div className="text-xs text-neutral-500">{h.settlement.createdAt.toISOString().slice(0, 10)} · {h.settlement.fromUserId === me.id ? "You" : friend.name} paid {h.settlement.toUserId === me.id ? "you" : friend.name}{h.settlement.status === "PENDING" ? " · doesn't count until confirmed" : ""}</div>
+              {h.settlement.status === "PENDING" && h.settlement.recordedById !== me.id && (
+                <div className="mt-1.5 flex gap-2">
+                  <form action={confirmSettlementForm}>
+                    <input type="hidden" name="settlementId" value={h.settlement.id} />
+                    <input type="hidden" name="back" value={`/friends/${friendId}`} />
+                    <Button type="submit" className="px-2.5 py-1 text-xs">Confirm</Button>
+                  </form>
+                  <form action={rejectSettlementForm}>
+                    <input type="hidden" name="settlementId" value={h.settlement.id} />
+                    <input type="hidden" name="back" value={`/friends/${friendId}`} />
+                    <Button type="submit" variant="secondary" className="px-2.5 py-1 text-xs">Reject</Button>
+                  </form>
+                </div>
+              )}
+              {h.settlement.status === "PENDING" && h.settlement.recordedById === me.id && (
+                <form action={voidSettlementForm} className="mt-1.5">
+                  <input type="hidden" name="settlementId" value={h.settlement.id} />
+                  <input type="hidden" name="back" value={`/friends/${friendId}`} />
+                  <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400 hover:text-red-600">Cancel entry</Button>
+                </form>
+              )}
+              {h.settlement.status === "CONFIRMED" && (
+                <form action={voidSettlementForm} className="mt-1.5">
+                  <input type="hidden" name="settlementId" value={h.settlement.id} />
+                  <input type="hidden" name="back" value={`/friends/${friendId}`} />
+                  <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400 hover:text-red-600">Void</Button>
+                </form>
+              )}
             </div>
-            <span className="font-semibold text-neutral-600">{formatMoney(h.settlement.amountInCents, h.settlement.currency)}</span>
+            <span className={`font-semibold ${h.settlement.status === "VOIDED" ? "text-neutral-400 line-through" : "text-neutral-600"}`}>{formatMoney(h.settlement.amountInCents, h.settlement.currency)}</span>
           </Card>
         ))}
       </div>

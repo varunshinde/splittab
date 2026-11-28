@@ -501,7 +501,7 @@ export async function recordSettlementForm(formData: FormData) {
   if (fromUserId === toUserId) throw new Error("cannot settle with yourself");
   if (fromUserId !== me.id && toUserId !== me.id) throw new Error("you are not a party to this settlement");
   if (groupId) {
-    const members = await prisma.groupMember.findMany({ where: { groupId } });
+    const members = await prisma.groupMember.findMany({ where: { groupId, status: "MEMBER" } });
     const ids = new Set(members.map((m) => m.userId));
     if (!ids.has(me.id) || !ids.has(fromUserId) || !ids.has(toUserId)) throw new Error("both parties must be group members");
   } else {
@@ -509,7 +509,7 @@ export async function recordSettlementForm(formData: FormData) {
     // group / expense history with me — strangers by guessed id are rejected.
     const otherId = fromUserId === me.id ? toUserId : fromUserId;
     const ok = (await areFriends(me.id, otherId)) ||
-      !!(await prisma.groupMember.findFirst({ where: { userId: me.id, group: { members: { some: { userId: otherId } } } } })) ||
+      !!(await prisma.groupMember.findFirst({ where: { userId: me.id, status: "MEMBER", group: { members: { some: { userId: otherId, status: "MEMBER" } } } } })) ||
       !!(await prisma.expense.findFirst({
         where: { OR: [
           { paidById: me.id, splits: { some: { userId: otherId } } },
@@ -518,18 +518,80 @@ export async function recordSettlementForm(formData: FormData) {
       }));
     if (!ok) throw new Error("you can only settle up with someone you share expenses with");
   }
-  await prisma.settlement.create({
-    data: { fromUserId, toUserId, amountInCents, groupId, currency: parseCurrency(formData.get("currency")) },
+  // N3: a settlement starts PENDING and moves no balances until the OTHER
+  // party confirms it — recording "you paid me" can no longer rewrite
+  // someone else's ledger unilaterally.
+  const settlement = await prisma.settlement.create({
+    data: { fromUserId, toUserId, amountInCents, groupId, currency: parseCurrency(formData.get("currency")), status: "PENDING", recordedById: me.id },
   });
   const [fromUser, toUser] = await Promise.all([
     prisma.user.findUnique({ where: { id: fromUserId } }),
     prisma.user.findUnique({ where: { id: toUserId } }),
   ]);
   await prisma.activity.create({
-    data: { groupId, userId: me.id, type: "settlement", message: `${fromUser?.name ?? "Someone"} paid ${toUser?.name ?? "someone"} (settlement)` },
+    data: { groupId, userId: me.id, type: "settlement", message: `${fromUser?.name ?? "Someone"} paid ${toUser?.name ?? "someone"} (settlement, pending confirmation)` },
   });
   revalidatePath("/dashboard");
   redirect(back);
+}
+
+/** Load a settlement I am a party to, or throw. */
+async function mySettlement(meId: string, settlementId: string) {
+  const s = await prisma.settlement.findUnique({ where: { id: settlementId } });
+  if (!s || (s.fromUserId !== meId && s.toUserId !== meId)) throw new Error("not your settlement");
+  return s;
+}
+
+async function settlementActivity(s: { id: string; groupId: string | null; fromUserId: string; toUserId: string }, meId: string, verb: string) {
+  const [fromUser, toUser] = await Promise.all([
+    prisma.user.findUnique({ where: { id: s.fromUserId } }),
+    prisma.user.findUnique({ where: { id: s.toUserId } }),
+  ]);
+  await prisma.activity.create({
+    data: { groupId: s.groupId, userId: meId, type: "settlement", message: `Settlement ${verb}: ${fromUser?.name ?? "Someone"} paid ${toUser?.name ?? "someone"}` },
+  });
+}
+
+/** Confirm a settlement the OTHER party recorded (N3). Only the
+ *  counterparty can confirm — never the person who entered it. */
+export async function confirmSettlementForm(formData: FormData) {
+  const me = await requireUser();
+  const back = safeBackPath(formData.get("back"));
+  const s = await mySettlement(me.id, String(formData.get("settlementId") ?? ""));
+  if (s.status !== "PENDING") throw new Error("settlement is not pending");
+  if (s.recordedById === me.id) throw new Error("you cannot confirm your own settlement entry");
+  await prisma.settlement.update({ where: { id: s.id }, data: { status: "CONFIRMED" } });
+  await settlementActivity(s, me.id, "confirmed");
+  revalidatePath("/dashboard");
+  redirect(flashUrl(back, "notice", "settlement_confirmed"));
+}
+
+/** Reject a pending settlement recorded by the other party (N3). */
+export async function rejectSettlementForm(formData: FormData) {
+  const me = await requireUser();
+  const back = safeBackPath(formData.get("back"));
+  const s = await mySettlement(me.id, String(formData.get("settlementId") ?? ""));
+  if (s.status !== "PENDING") throw new Error("settlement is not pending");
+  if (s.recordedById === me.id) throw new Error("cancel your own entry instead of rejecting it");
+  await prisma.settlement.update({ where: { id: s.id }, data: { status: "VOIDED" } });
+  await settlementActivity(s, me.id, "rejected");
+  revalidatePath("/dashboard");
+  redirect(flashUrl(back, "notice", "settlement_voided"));
+}
+
+/** Void a settlement (N3): the recorder can cancel their own PENDING
+ *  entry; either party can void a CONFIRMED one. The row stays as the
+ *  audit trail; it simply stops counting. */
+export async function voidSettlementForm(formData: FormData) {
+  const me = await requireUser();
+  const back = safeBackPath(formData.get("back"));
+  const s = await mySettlement(me.id, String(formData.get("settlementId") ?? ""));
+  if (s.status === "VOIDED") throw new Error("settlement already voided");
+  if (s.status === "PENDING" && s.recordedById !== me.id) throw new Error("only the recorder can cancel a pending settlement — reject it instead");
+  await prisma.settlement.update({ where: { id: s.id }, data: { status: "VOIDED" } });
+  await settlementActivity(s, me.id, "voided");
+  revalidatePath("/dashboard");
+  redirect(flashUrl(back, "notice", "settlement_voided"));
 }
 
 /** Friend-detail settle-up: direction is derived from the current net. */
@@ -553,8 +615,10 @@ export async function settleFriendForm(formData: FormData) {
   if (amountInCents <= 0) redirect(flashUrl(`/friends/${friendId}`, "notice", "already_settled"));
   const fromUserId = net > 0 ? friendId : me.id;
   const toUserId = net > 0 ? me.id : friendId;
-  await prisma.settlement.create({ data: { fromUserId, toUserId, amountInCents, groupId: null } });
-  await prisma.activity.create({ data: { groupId: null, userId: me.id, type: "settlement", message: "Settlement recorded with a friend" } });
+  // N3: even the one-click settle-up starts PENDING — it counts only
+  // once the other party confirms it actually happened.
+  await prisma.settlement.create({ data: { fromUserId, toUserId, amountInCents, groupId: null, status: "PENDING", recordedById: me.id } });
+  await prisma.activity.create({ data: { groupId: null, userId: me.id, type: "settlement", message: "Settlement recorded with a friend (pending confirmation)" } });
   revalidatePath("/dashboard");
   redirect(flashUrl(`/friends/${friendId}`, "notice", "settlement_recorded"));
 }

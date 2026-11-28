@@ -41,7 +41,9 @@ export const FLASH_MESSAGES = {
   friend_request_sent: "Friend request sent. When they accept, you'll be able to split expenses together.",
   member_added: "Invitation sent. They'll become a member when they accept.",
   already_settled: "You are already settled up.",
-  settlement_recorded: "Settlement recorded.",
+  settlement_recorded: "Settlement recorded — it counts once the other person confirms it.",
+  settlement_confirmed: "Settlement confirmed — it now counts toward your balances.",
+  settlement_voided: "Settlement voided — it no longer counts toward your balances.",
 } as const;
 
 export type FlashCode = keyof typeof FLASH_MESSAGES;

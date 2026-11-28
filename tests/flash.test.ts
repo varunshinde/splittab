@@ -4,7 +4,7 @@ import { flashText, flashUrl, passwordFlashCode } from "../lib/flash";
 describe("flash messages (F8)", () => {
   it("known codes render their fixed message", () => {
     expect(flashText("invalid_credentials", "error")).toBe("Invalid email or password.");
-    expect(flashText("settlement_recorded", "notice")).toBe("Settlement recorded.");
+    expect(flashText("settlement_recorded", "notice")).toBe("Settlement recorded — it counts once the other person confirms it.");
   });
   it("attacker-supplied text is NEVER rendered — generic fallback instead", () => {
     const evil = "Session expired, call 1-800-EVIL to restore access";
