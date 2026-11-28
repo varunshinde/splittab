@@ -15,11 +15,12 @@ import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
 
-export default async function GroupPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; notice?: string; error?: string }> }) {
+export default async function GroupPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; view?: string; notice?: string; error?: string }> }) {
   const me = await requireUser();
   const { id } = await params;
   const sp = await searchParams;
   const tab = sp.tab ?? "expenses";
+  const balanceView = sp.view === "simplify" ? "simplify" : "person";
   // Membership-scoped fetch: a non-member gets a 404, never the group's data.
   const group = await getMyGroup(me.id, id).catch(() => null);
   if (!group) notFound();
@@ -89,14 +90,22 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
   const nameOf = (uid: string) => group.members.find((m) => m.userId === uid)?.user.name ?? "Former member";
   const myBalance = balances.get(me.id) ?? 0;
 
-  const byDateMap = new Map<string, number>(); const byCatMap = new Map<string, number>();
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const byMonthMap = new Map<string, number>(); const byCatMap = new Map<string, number>(); const byPayerMap = new Map<string, number>();
   for (const e of group.expenses) {
     if (e.voidedAt) continue; // voided expenses don't count as spending
     const base = convertCurrency(e.amountInCents, e.currency, group.baseCurrency);
-    const d = e.date.toISOString().slice(0, 10);
-    byDateMap.set(d, (byDateMap.get(d) ?? 0) + base / 100);
+    const monthKey = e.date.toISOString().slice(0, 7); // yyyy-mm, sorts chronologically
+    byMonthMap.set(monthKey, (byMonthMap.get(monthKey) ?? 0) + base / 100);
     byCatMap.set(e.category, (byCatMap.get(e.category) ?? 0) + base / 100);
+    byPayerMap.set(e.paidBy.name, (byPayerMap.get(e.paidBy.name) ?? 0) + base / 100);
   }
+  const byMonth = [...byMonthMap.entries()].sort().map(([key, amount]) => ({ month: `${MONTH_NAMES[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`, amount }));
+  const largestExpenses = group.expenses
+    .filter((e) => !e.voidedAt)
+    .map((e) => ({ e, base: convertCurrency(e.amountInCents, e.currency, group.baseCurrency) }))
+    .sort((a, b) => b.base - a.base)
+    .slice(0, 5);
   const tabs = [
     { key: "expenses", label: "Expenses" },
     { key: "balances", label: "Balances" },
@@ -174,17 +183,51 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
       )}
 
       {tab === "balances" && (
-        <Card className="divide-y divide-neutral-100 py-2">
-          {[...balances.entries()].map(([uid, v]) => (
-            <div key={uid} className="flex items-center gap-3 px-2 py-2">
-              <Avatar name={nameOf(uid)} size="sm" />
-              <span className="flex-1 font-medium">{uid === me.id ? "You" : nameOf(uid)}</span>
-              <b className={v > 0 ? "text-brand" : v < 0 ? "text-owe" : "text-neutral-400"}>
-                {v === 0 ? "settled up" : v > 0 ? `gets back ${formatMoney(v, group.baseCurrency)}` : `owes ${formatMoney(-v, group.baseCurrency)}`}
-              </b>
+        <div className="space-y-3">
+          {/* Splitwise-style view toggle: per-person net balances, or the
+              simplified payment plan (fewest payments that settles everyone). */}
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-lg border border-neutral-300 bg-white p-0.5">
+              <Link href={`/groups/${id}?tab=balances`} className={`rounded-md px-3 py-1.5 text-sm font-medium ${balanceView === "person" ? "bg-brand text-white" : "text-neutral-600 hover:text-brand-dark"}`}>Per-person balances</Link>
+              <Link href={`/groups/${id}?tab=balances&view=simplify`} className={`rounded-md px-3 py-1.5 text-sm font-medium ${balanceView === "simplify" ? "bg-brand text-white" : "text-neutral-600 hover:text-brand-dark"}`}>Simplify debts</Link>
             </div>
-          ))}
-        </Card>
+            {balanceView === "simplify" && <span className="text-sm text-neutral-500">The fewest payments that settles everyone up.</span>}
+          </div>
+          {balanceView === "person" ? (
+            <Card className="divide-y divide-neutral-100 py-2">
+              {[...balances.entries()].map(([uid, v]) => (
+                <div key={uid} className="flex items-center gap-3 px-2 py-2">
+                  <Avatar name={nameOf(uid)} size="sm" />
+                  <span className="flex-1 font-medium">{uid === me.id ? "You" : nameOf(uid)}</span>
+                  <b className={v > 0 ? "text-brand" : v < 0 ? "text-owe" : "text-neutral-400"}>
+                    {v === 0 ? "settled up" : v > 0 ? `gets back ${formatMoney(v, group.baseCurrency)}` : `owes ${formatMoney(-v, group.baseCurrency)}`}
+                  </b>
+                </div>
+              ))}
+            </Card>
+          ) : (
+            <Card className="py-2">
+              {debts.length === 0 ? (
+                <p className="px-2 py-2 text-neutral-500">All settled up in this group. 🎉</p>
+              ) : debts.map((d, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2 border-b border-neutral-100 px-2 py-2.5 last:border-0">
+                  <span className="flex-1">{d.from === me.id ? "You" : nameOf(d.from)} → {d.to === me.id ? "You" : nameOf(d.to)}: <b>{formatMoney(d.amountInCents, group.baseCurrency)}</b></span>
+                  {(d.from === me.id || d.to === me.id) && (
+                    <form action={recordSettlementForm}>
+                      <input type="hidden" name="fromUserId" value={d.from} />
+                      <input type="hidden" name="toUserId" value={d.to} />
+                      <input type="hidden" name="groupId" value={id} />
+                      <input type="hidden" name="currency" value={group.baseCurrency} />
+                      <input type="hidden" name="amount" value={(d.amountInCents / 100).toFixed(2)} />
+                      <input type="hidden" name="back" value={`/groups/${id}?tab=balances&view=simplify`} />
+                      <Button type="submit" variant="owe" className="px-3 py-1.5 text-xs">Record payment</Button>
+                    </form>
+                  )}
+                </div>
+              ))}
+            </Card>
+          )}
+        </div>
       )}
 
       {tab === "settle" && (
@@ -264,7 +307,55 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
         </Card>
       )}
 
-      {tab === "charts" && <Card><SpendingCharts byDate={[...byDateMap.entries()].sort().map(([date, amount]) => ({ date, amount }))} byCategory={[...byCatMap.entries()].map(([name, value]) => ({ name, value }))} /></Card>}
+      {tab === "charts" && (
+        <div className="space-y-4">
+          <Card>
+            {byMonth.length === 0 ? <p className="text-sm text-neutral-500">No spending to chart yet.</p> : (
+              <SpendingCharts
+                byMonth={byMonth}
+                byCategory={[...byCatMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)}
+                byPayer={[...byPayerMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)}
+              />
+            )}
+          </Card>
+          {largestExpenses.length > 0 && (
+            <Card>
+              <h3 className="mb-1 font-semibold">Largest expenses</h3>
+              <p className="mb-2 text-sm text-neutral-500">The biggest charges in this group so far, in {group.baseCurrency}.</p>
+              <div className="divide-y divide-neutral-100">
+                {largestExpenses.map(({ e, base }, i) => (
+                  <div key={e.id} className="flex items-center gap-3 py-2">
+                    <span className="w-6 text-sm font-bold text-neutral-400">#{i + 1}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{e.description}</span>
+                      <span className="block text-xs text-neutral-500">Paid by {e.paidBy.name} · {e.date.toISOString().slice(0, 10)} · {e.category}</span>
+                    </span>
+                    <b>{formatMoney(base, group.baseCurrency)}</b>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+          {byPayerMap.size > 0 && (
+            <Card>
+              <h3 className="mb-1 font-semibold">Who fronted the money</h3>
+              <div className="divide-y divide-neutral-100">
+                {[...byPayerMap.entries()].sort((a, b) => b[1] - a[1]).map(([name, cents], i) => {
+                  const total = [...byPayerMap.values()].reduce((s, v) => s + v, 0);
+                  return (
+                    <div key={name} className="flex items-center gap-3 py-2 text-sm">
+                      <span className="w-6 font-bold text-neutral-400">#{i + 1}</span>
+                      <span className="flex-1 font-medium">{name}</span>
+                      <span className="text-neutral-500">{total > 0 ? `${Math.round((cents / total) * 100)}%` : ""}</span>
+                      <b>{formatMoney(Math.round(cents * 100), group.baseCurrency)}</b>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
 
       {tab === "members" && (
         <div className="space-y-4">
