@@ -149,6 +149,18 @@ run("new-device login: email code challenge + trusted devices (DB, mail mocked)"
     (globalThis as Record<string, unknown>).__testGeo = { city: "Denver", region: "CO", country: "US" };
   }, 30000);
 
+  it("R9: an EXPIRED trust row (past its 90 days) is challenged even with the cookie", async () => {
+    await prisma.session.deleteMany({ where: { userId } });
+    await prisma.loginAttempt.deleteMany({ where: { kind: "device_code", email } });
+    await prisma.trustedDevice.updateMany({ where: { userId }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    jar.clear();
+    jar.set("device_token", trustedToken);
+    await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/verify-device/);
+    expect(jar.get("session")).toBeUndefined();
+    // Restore a live expiry for the tests that follow.
+    await prisma.trustedDevice.updateMany({ where: { userId }, data: { expiresAt: new Date(Date.now() + 90 * 24 * 3600e3) } });
+  }, 30000);
+
   it("N1 regression: same User-Agent + correct password but NO device token is challenged", async () => {
     await prisma.session.deleteMany({ where: { userId } });
     await prisma.loginAttempt.deleteMany({ where: { kind: "device_code", email } });

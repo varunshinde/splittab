@@ -3,6 +3,8 @@ import { flashText } from "@/lib/flash";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getMyGroup } from "@/lib/data";
+import { prisma } from "@/lib/db";
+import { renderActivity, userLabel, type LabelUser } from "@/lib/activity-render";
 import { formatMoney } from "@/lib/format";
 import { computeBalances, computeSimplifiedDebts } from "@/lib/debt";
 import { convertCurrency } from "@/lib/currency";
@@ -21,6 +23,24 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
   // Membership-scoped fetch: a non-member gets a 404, never the group's data.
   const group = await getMyGroup(me.id, id).catch(() => null);
   if (!group) notFound();
+
+  // R1: activity text is rendered from user ids against CURRENT rows, so
+  // renames and deletions ("Deleted user") show correctly with no stored
+  // names. People who left the group are looked up too.
+  const activityUserIds = new Set<string>();
+  for (const a of group.activities) {
+    if (a.userId) activityUserIds.add(a.userId);
+    if (a.subjectId) activityUserIds.add(a.subjectId);
+    const d = a.data as { fromUserId?: unknown } | null;
+    if (d && typeof d.fromUserId === "string") activityUserIds.add(d.fromUserId);
+  }
+  const memberUserById = new Map<string, LabelUser>(group.members.map((m) => [m.userId, m.user as LabelUser]));
+  const missingIds = [...activityUserIds].filter((u) => !memberUserById.has(u));
+  const extraUsers = missingIds.length
+    ? await prisma.user.findMany({ where: { id: { in: missingIds } }, select: { id: true, name: true, email: true, isPlaceholder: true } })
+    : [];
+  const labelUserById = new Map<string, LabelUser>([...memberUserById, ...extraUsers.map((u): [string, LabelUser] => [u.id, u])]);
+  const activityLabelOf = (userId: string | null) => userLabel(userId ? labelUserById.get(userId) : undefined, me.id);
 
   // N2: an invited (not yet accepted) user sees ONLY the invitation —
   // no expenses, balances, member list or activity until they accept.
@@ -265,7 +285,7 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
 
       {tab === "activity" && (
         <div className="space-y-3">
-          <Card>{group.activities.length === 0 ? <p className="text-sm text-neutral-500">No activity yet.</p> : group.activities.map((a) => <div key={a.id} className="py-1 text-sm">{a.createdAt.toISOString().slice(0, 16).replace("T", " ")} — {a.message}</div>)}</Card>
+          <Card>{group.activities.length === 0 ? <p className="text-sm text-neutral-500">No activity yet.</p> : group.activities.map((a) => <div key={a.id} className="py-1 text-sm">{a.createdAt.toISOString().slice(0, 16).replace("T", " ")} — {renderActivity(a, activityLabelOf)}</div>)}</Card>
           <Card>
             <h2 className="mb-1 font-semibold">Trip Pass</h2>
             <p className="mb-2 text-sm text-neutral-500">{group.tripPasses.some((p) => hasProAccess({ isPro: false }, [p])) ? "An active Trip Pass gives this group Pro access." : "No active Trip Pass. A Pro member can grant one for 30 days."}</p>

@@ -34,6 +34,7 @@ async function expectRedirect(p: Promise<unknown>): Promise<string> {
 d("F12 account deletion (tombstone)", () => {
   let prisma: any, deleteAccountAction: any, hashPassword: any, SESSION_COOKIE: string;
   let userId: string;
+  let bystanderId: string;
   const EMAIL = "deltest@example.com";
   const PASSWORD = "Delete-Me-2026!";
 
@@ -52,14 +53,21 @@ d("F12 account deletion (tombstone)", () => {
     const tokenHash = crypto.createHash("sha256").update(raw).digest("hex");
     await prisma.session.create({ data: { userId, tokenHash, expiresAt: new Date(Date.now() + 3600e3) } });
     jar.set(SESSION_COOKIE, raw);
-    await prisma.trustedDevice.create({ data: { userId, tokenHash: "d".repeat(64), userAgent: "test", ipAddress: "127.0.0.1", city: "Unknown", region: "Unknown", country: "Unknown" } });
+    await prisma.trustedDevice.create({ data: { userId, tokenHash: "d".repeat(64), userAgent: "test", ipAddress: "127.0.0.1", city: "Unknown", region: "Unknown", country: "Unknown", expiresAt: new Date(Date.now() + 90 * 24 * 3600e3) } });
     // N10 remnants: an activity message embedding the real name, and
     // LoginAttempt rows carrying the email/IP history.
     await prisma.activity.create({ data: { userId, type: "member_joined", message: "Del Test joined the group" } });
+    const bystander = await prisma.user.create({
+      data: { name: "Bystander", email: `bystander-${Date.now()}@example.com`, passwordHash: await hashPassword(PASSWORD), emailVerifiedAt: new Date() },
+    });
+    bystanderId = bystander.id;
+    await prisma.activity.create({ data: { userId: bystanderId, type: "expense_voided", message: 'Expense "Del Test memorial dinner" voided by Bystander' } });
     await prisma.loginAttempt.create({ data: { kind: "login", email: EMAIL, ip: "198.51.100.99", succeeded: true } });
   });
 
   afterAll(async () => {
+    await prisma.activity.deleteMany({ where: { userId: bystanderId } }).catch(() => {});
+    await prisma.user.deleteMany({ where: { id: bystanderId } }).catch(() => {});
     await prisma.user.deleteMany({ where: { id: userId } });
     await prisma.$disconnect();
   });
@@ -85,12 +93,15 @@ d("F12 account deletion (tombstone)", () => {
     expect(u.emailVerifiedAt).toBeNull();
     expect(await prisma.session.count({ where: { userId } })).toBe(0);
     expect(await prisma.trustedDevice.count({ where: { userId } })).toBe(0);
-    // N10: the real name is scrubbed from free-text activity messages,
-    // and the LoginAttempt history for the email is purged.
+    // R1: the leaver's OWN authored messages are neutralized, and the
+    // LoginAttempt history for the email is purged...
     const acts = await prisma.activity.findMany({ where: { userId } });
     expect(acts.length).toBeGreaterThan(0);
-    for (const a of acts) expect(a.message).not.toContain("Del Test");
-    expect(acts[0].message).toContain("Deleted user");
+    for (const a of acts) expect(a.message).toBe("Activity by a deleted user");
     expect(await prisma.loginAttempt.count({ where: { email: EMAIL } })).toBe(0);
+    // ...but another user's message that merely contains the leaver's
+    // name as a substring is NOT rewritten (the old global scrub did).
+    const bystanderActs = await prisma.activity.findMany({ where: { userId: bystanderId } });
+    expect(bystanderActs[0].message).toBe('Expense "Del Test memorial dinner" voided by Bystander');
   });
 });

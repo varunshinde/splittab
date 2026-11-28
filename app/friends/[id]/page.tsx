@@ -16,7 +16,10 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
   const { id: friendId } = await params;
   const { notice } = await searchParams;
   const friendship = await findFriendship(me.id, friendId).catch(() => null);
-  if (!friendship) notFound(); // not my friend -> 404, no data leaked
+  // R3: only an ACCEPTED friendship opens this page. A PENDING request
+  // must not turn the URL into a name/registration lookup (the sender
+  // learns the page exists the moment the target accepts — not before).
+  if (!friendship || friendship.status !== "ACCEPTED") notFound();
   const friend = await prisma.user.findUnique({ where: { id: friendId } });
   if (!friend) notFound();
 
