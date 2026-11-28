@@ -8,7 +8,7 @@ import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
 import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { deviceCodeEmailHtml, existingAccountEmailHtml, getAppUrl, newSigninAlertEmailHtml, resetEmailHtml, sendEmail, verificationEmailHtml, type SigninContext } from "@/lib/mail";
 import {
-  challengeState, describeDevice, generateDeviceToken, generateLoginCode, hashDeviceToken, hashLoginCode, locationChanged,
+  challengeState, describeDevice, deviceTrustExpiry, generateDeviceToken, generateLoginCode, hashDeviceToken, hashLoginCode, locationChanged,
   locationLabel, loginCodeMatches, parseGeo, DEVICE_CHALLENGE_COOKIE, DEVICE_TOKEN_COOKIE, DEVICE_TOKEN_MAX_AGE_S, LOGIN_CODE_MAX_ATTEMPTS, LOGIN_CODE_TTL_MS,
 } from "@/lib/device";
 import { flashUrl, passwordFlashCode, type FlashCode } from "@/lib/flash";
@@ -213,14 +213,17 @@ export async function loginAction(formData: FormData) {
   const trusted = deviceToken
     ? await prisma.trustedDevice
         .findUnique({ where: { tokenHash: hashDeviceToken(deviceToken) } })
-        .then((d) => (d && d.userId === user.id ? d : null))
+        // R9: an expired trust row is no trust at all, however fresh the
+        // cookie looks.
+        .then((d) => (d && d.userId === user.id && d.expiresAt > new Date() ? d : null))
         .catch(() => null)
     : null;
   if (trusted) {
     const prev = { city: trusted.city, region: trusted.region, country: trusted.country };
     await prisma.trustedDevice.update({
       where: { id: trusted.id },
-      data: { lastSeenAt: new Date(), ipAddress: ip, city: geo.city, region: geo.region, country: geo.country },
+      // R9: sliding expiry — using the device renews its 90 days.
+      data: { lastSeenAt: new Date(), expiresAt: deviceTrustExpiry(), ipAddress: ip, city: geo.city, region: geo.region, country: geo.country },
     }).catch(() => {});
     if (locationChanged(prev, geo)) {
       await inBackground(() => sendEmail({
@@ -310,6 +313,8 @@ export async function verifyDeviceAction(formData: FormData) {
       data: {
         userId: challenge.userId, tokenHash: hashDeviceToken(deviceToken), userAgent: challenge.userAgent,
         ipAddress: challenge.ipAddress, city: challenge.city, region: challenge.region, country: challenge.country,
+        // R9: server-side expiry (90 days, sliding) — see lib/device-trust.
+        expiresAt: deviceTrustExpiry(),
       },
     });
     store.set(DEVICE_TOKEN_COOKIE, deviceToken, {
@@ -476,22 +481,19 @@ export async function deleteAccountAction(formData: FormData) {
   await prisma.emailVerificationToken.deleteMany({ where: { userId: user.id } });
   await prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
   await prisma.session.deleteMany({ where: { userId: user.id } });
-  // N10: tombstoning the user row is not enough — the real name also
-  // lives in free-text activity messages ("X added Y to the group") and
-  // the email/IP history sits in LoginAttempt rows. Scrub both.
-  if (user.name && user.name !== "Deleted user") {
-    const named = await prisma.activity.findMany({
-      where: { message: { contains: user.name } },
-      select: { id: true, message: true },
-      take: 1000,
-    }).catch(() => []);
-    for (const a of named) {
-      await prisma.activity.update({
-        where: { id: a.id },
-        data: { message: a.message.split(user.name).join("Deleted user") },
-      }).catch(() => {});
-    }
-  }
+  // R1: NO global find-and-replace of the user's name in activity text —
+  // the old scrub rewrote OTHER people's messages across the whole
+  // database whenever the name appeared as a substring ("Al" inside
+  // "also", a user literally named "voided by"). Activity written since
+  // R1 stores ids, not names, and renders from the tombstoned row, so
+  // the leaver reads as "Deleted user" everywhere automatically. For
+  // legacy rows, neutralize only the messages the leaver AUTHORED
+  // (their own text can name other people); everyone else's records of
+  // shared history are their own and stay untouched.
+  await prisma.activity.updateMany({
+    where: { userId: user.id },
+    data: { message: "Activity by a deleted user" },
+  }).catch(() => {});
   await prisma.loginAttempt.deleteMany({ where: { email: user.email } }).catch(() => {});
   await prisma.user.update({
     where: { id: user.id },

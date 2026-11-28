@@ -40,6 +40,7 @@ model User {
   defaultSplitsAsOther     DefaultSplit[] @relation("SplitOther")
   tripPassesGranted        TripPass[]     @relation("TripPassGrantor")
   activities               Activity[]
+  activitySubjects         Activity[]             @relation("ActivitySubject")
   friendshipsAsA           Friendship[]   @relation("FriendshipA")
   friendshipsAsB           Friendship[]   @relation("FriendshipB")
   verificationTokens       EmailVerificationToken[]
@@ -124,6 +125,9 @@ model TrustedDevice {
   country     String
   createdAt   DateTime @default(now())
   lastSeenAt  DateTime @default(now())
+  // R9: trust expires server-side (90 days, sliding on use) — the cookie
+  // alone living 400 days must not keep a stale row valid forever.
+  expiresAt   DateTime
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -189,6 +193,9 @@ model Group {
 enum GroupMemberStatus {
   INVITED
   MEMBER
+  // R10: a declined invitation is remembered — the row stays so the
+  // person cannot be re-invited to the same group over and over.
+  DECLINED
 }
 
 model GroupMember {
@@ -196,6 +203,10 @@ model GroupMember {
   groupId     String
   status      GroupMemberStatus @default(MEMBER)
   invitedById String?
+  // R11: an invitation suppressed because of a block still shows as
+  // "pending" to the inviter (so the block is not revealed), but it is
+  // never surfaced to the invitee anywhere.
+  inviteSuppressed Boolean      @default(false)
   joinedAt    DateTime          @default(now())
   user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   group       Group             @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -265,6 +276,9 @@ enum SettlementStatus {
   PENDING
   CONFIRMED
   VOIDED
+  // R6: a party asked to void a CONFIRMED settlement; it keeps counting
+  // until the OTHER party agrees (then VOIDED) or declines (CONFIRMED).
+  VOID_REQUESTED
 }
 
 model Settlement {
@@ -278,6 +292,7 @@ model Settlement {
   // (hence the CONFIRMED default); new rows are created PENDING.
   status        SettlementStatus @default(CONFIRMED)
   recordedById  String? // who entered it; the other party must confirm
+  voidRequestedById String? // R6: who asked to void a confirmed settlement
   // Null = friend-level settlement; set = settles within that group.
   groupId       String?
   createdAt     DateTime         @default(now())
@@ -332,10 +347,19 @@ model Activity {
   groupId   String?
   userId    String?
   type      String
+  // R1: `message` is a PII-free fallback string only. Names and emails
+  // are NEVER baked into it — the people involved are stored as ids
+  // (userId = actor, subjectId = the other party) plus non-PII params
+  // in `data`, and the display text is rendered from the CURRENT user
+  // rows at read time. A deleted account's row is tombstoned to
+  // "Deleted user", so feeds update themselves with no text scrubbing.
   message   String
+  subjectId String?
+  data      Json?
   createdAt DateTime @default(now())
   group     Group?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user      User?    @relation(fields: [userId], references: [id])
+  subject   User?    @relation("ActivitySubject", fields: [subjectId], references: [id], onDelete: SetNull)
 
   @@index([groupId, createdAt])
 }

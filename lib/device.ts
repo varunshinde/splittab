@@ -27,6 +27,14 @@ export const DEVICE_TOKEN_COOKIE = "device_token";
 /** Browsers cap cookie lifetimes at 400 days; trusted devices match that. */
 export const DEVICE_TOKEN_MAX_AGE_S = 400 * 24 * 60 * 60;
 
+/** R9: server-side trust lifetime — 90 days, sliding (renewed on each
+ *  trusted sign-in). The cookie can outlive the row's welcome no longer:
+ *  an expired row is treated as no trust at all. */
+export const DEVICE_TRUST_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+export function deviceTrustExpiry(from: Date = new Date()): Date {
+  return new Date(from.getTime() + DEVICE_TRUST_TTL_MS);
+}
+
 /** New random device-trust token (the cookie value; never stored raw). */
 export function generateDeviceToken(): string {
   return randomBytes(32).toString("base64url");

@@ -211,7 +211,7 @@ export async function createGroupForm(formData: FormData) {
           ...[...new Set(invitees.map((u) => u.id))].map((userId) => ({ userId, status: "INVITED" as const, invitedById: me.id })),
         ],
       },
-      activities: { create: { userId: me.id, type: "group_created", message: `Group "${name}" created` } },
+      activities: { create: { userId: me.id, type: "group_created", message: `Group "${name}" created`, data: {} } },
     },
   });
   await recordAction("group_create", me.email, clientIp(await headers()));
@@ -241,9 +241,9 @@ export async function addGroupMemberForm(formData: FormData) {
     create: { userId: user.id, groupId, status: "INVITED", invitedById: me.id },
     update: {},
   });
-  // The activity echoes the address AS TYPED by the inviter (N6): showing
-  // the resolved account name here would be an email->name oracle.
-  await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_invited", message: `Invited ${email} to the group` } });
+  // R1: the activity stores the invitee's ID, never the typed address —
+  // the feed renders the person from their current row at read time.
+  await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_invited", subjectId: user.id, message: "A new member was invited to the group", data: {} } });
   await recordAction("group_member_add", me.email, clientIp(await headers()));
   revalidatePath(`/groups/${groupId}`);
   // Non-revealing response (F3): don't confirm the real name behind an
@@ -267,7 +267,7 @@ export async function acceptGroupInviteForm(formData: FormData) {
   if (membership.invitedById && membership.invitedById !== me.id) {
     await befriend(membership.invitedById, me.id);
   }
-  await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_joined", message: `${me.name} joined the group` } });
+  await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_joined", message: "A member joined the group", data: {} } });
   revalidatePath("/dashboard");
   revalidatePath(`/groups/${groupId}`);
   redirect(`/groups/${groupId}`);
@@ -291,7 +291,7 @@ export async function leaveGroupForm(formData: FormData) {
   const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
   if (membership) {
     await prisma.groupMember.delete({ where: { userId_groupId: { userId: me.id, groupId } } });
-    await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_left", message: `${me.name} left the group` } });
+    await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_left", message: "A member left the group", data: {} } });
   }
   revalidatePath("/groups");
   redirect("/groups");
@@ -345,7 +345,7 @@ async function createExpense(meId: string, input: CreateExpenseInput) {
     include: { splits: true },
   });
   await prisma.activity.create({
-    data: { groupId: input.groupId, userId: meId, type: "expense_added", message: `Expense "${expense.description}" added` },
+    data: { groupId: input.groupId, userId: meId, type: "expense_added", subjectId: expense.paidById, message: `Expense "${expense.description}" added`, data: { description: expense.description } },
   });
   return expense;
 }
@@ -445,7 +445,7 @@ export async function deleteExpenseForm(formData: FormData) {
     data: { voidedAt: new Date(), voidedById: me.id, receiptId: null },
   });
   await prisma.activity.create({
-    data: { groupId: expense.groupId, userId: me.id, type: "expense_voided", message: `Expense "${expense.description}" voided by ${me.name}` },
+    data: { groupId: expense.groupId, userId: me.id, type: "expense_voided", subjectId: expense.paidById, message: `Expense "${expense.description}" voided`, data: { description: expense.description } },
   });
   revalidatePath("/dashboard");
   redirect(expense.groupId ? `/groups/${expense.groupId}` : "/dashboard");
@@ -535,12 +535,8 @@ export async function recordSettlementForm(formData: FormData) {
   const settlement = await prisma.settlement.create({
     data: { fromUserId, toUserId, amountInCents, groupId, currency: parseCurrency(formData.get("currency")), status: "PENDING", recordedById: me.id },
   });
-  const [fromUser, toUser] = await Promise.all([
-    prisma.user.findUnique({ where: { id: fromUserId } }),
-    prisma.user.findUnique({ where: { id: toUserId } }),
-  ]);
   await prisma.activity.create({
-    data: { groupId, userId: me.id, type: "settlement", message: `${fromUser?.name ?? "Someone"} paid ${toUser?.name ?? "someone"} (settlement, pending confirmation)` },
+    data: { groupId, userId: me.id, type: "settlement", subjectId: toUserId, message: "A settlement was recorded (pending confirmation)", data: { fromUserId, verb: "recorded" } },
   });
   revalidatePath("/dashboard");
   redirect(back);
@@ -554,12 +550,9 @@ async function mySettlement(meId: string, settlementId: string) {
 }
 
 async function settlementActivity(s: { id: string; groupId: string | null; fromUserId: string; toUserId: string }, meId: string, verb: string) {
-  const [fromUser, toUser] = await Promise.all([
-    prisma.user.findUnique({ where: { id: s.fromUserId } }),
-    prisma.user.findUnique({ where: { id: s.toUserId } }),
-  ]);
+  // R1: ids + verb only — the feed renders the names at read time.
   await prisma.activity.create({
-    data: { groupId: s.groupId, userId: meId, type: "settlement", message: `Settlement ${verb}: ${fromUser?.name ?? "Someone"} paid ${toUser?.name ?? "someone"}` },
+    data: { groupId: s.groupId, userId: meId, type: "settlement", subjectId: s.toUserId, message: "A settlement was updated", data: { fromUserId: s.fromUserId, verb } },
   });
 }
 
@@ -629,7 +622,7 @@ export async function settleFriendForm(formData: FormData) {
   // N3: even the one-click settle-up starts PENDING — it counts only
   // once the other party confirms it actually happened.
   await prisma.settlement.create({ data: { fromUserId, toUserId, amountInCents, groupId: null, status: "PENDING", recordedById: me.id } });
-  await prisma.activity.create({ data: { groupId: null, userId: me.id, type: "settlement", message: "Settlement recorded with a friend (pending confirmation)" } });
+  await prisma.activity.create({ data: { groupId: null, userId: me.id, type: "settlement", subjectId: toUserId, message: "Settlement recorded with a friend (pending confirmation)", data: { fromUserId, verb: "recorded" } } });
   revalidatePath("/dashboard");
   redirect(flashUrl(`/friends/${friendId}`, "notice", "settlement_recorded"));
 }
@@ -643,7 +636,7 @@ export async function grantTripPassForm(formData: FormData) {
   const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
   if (!membership || membership.status !== "MEMBER") throw new Error("you are not a member of this group");
   await prisma.tripPass.create({ data: { grantedByUserId: me.id, groupId, expiresAt: tripPassExpiry(new Date()) } });
-  await prisma.activity.create({ data: { groupId, userId: me.id, type: "trip_pass_granted", message: "Trip Pass granted (30 days of Pro for this group)" } });
+  await prisma.activity.create({ data: { groupId, userId: me.id, type: "trip_pass_granted", message: "Trip Pass granted (30 days of Pro for this group)", data: {} } });
   revalidatePath(`/groups/${groupId}`);
   redirect(`/groups/${groupId}?tab=activity`);
 }
@@ -679,7 +672,10 @@ export async function exportData() {
   const data = await prisma.user.findUniqueOrThrow({
     where: { id: me.id },
     include: {
-      memberships: { include: { group: { include: { expenses: { include: { splits: true, items: true } } } } } },
+      // R2: only groups I actually belong to — an INVITED (or declined)
+      // membership must not export the group's ledger to someone who
+      // never accepted.
+      memberships: { where: { status: "MEMBER" }, include: { group: { include: { expenses: { include: { splits: true, items: true } } } } } },
       paidExpenses: { include: { splits: true } },
       splits: { include: { expense: true } },
       settlementsSent: true,
