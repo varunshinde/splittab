@@ -117,10 +117,20 @@ run("N3: settlements need counterparty confirmation (DB)", () => {
     expect(await net()).toBe(5000 - 250000); // now it counts: Alice "owes" Bob back
   });
 
-  it("either party can void a confirmed settlement, restoring the balance", async () => {
+  it("R6: voiding a confirmed settlement needs the other party's agreement", async () => {
     const s = await prisma.settlement.findFirst({ where: { fromUserId: bob.id } });
     jar.set("session", tokenA);
     await expect(actions.voidSettlementForm(form({ settlementId: s.id, back: "/friends" })))
+      .rejects.toThrow(/NEXT_REDIRECT/);
+    // A request, not a fact: still CONFIRMED for balance purposes.
+    expect((await prisma.settlement.findUnique({ where: { id: s.id } })).status).toBe("VOID_REQUESTED");
+    expect(await net()).toBe(5000 - 250000); // still counts
+    // The requester cannot agree to their own request.
+    await expect(actions.confirmVoidSettlementForm(form({ settlementId: s.id, back: "/friends" })))
+      .rejects.toThrow(/your own void request/);
+    // The counterparty agrees: now it is voided and the balance is restored.
+    jar.set("session", tokenB);
+    await expect(actions.confirmVoidSettlementForm(form({ settlementId: s.id, back: "/friends" })))
       .rejects.toThrow(/NEXT_REDIRECT/);
     expect((await prisma.settlement.findUnique({ where: { id: s.id } })).status).toBe("VOIDED");
     expect(await net()).toBe(5000);

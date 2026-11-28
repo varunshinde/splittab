@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getMyExpense } from "@/lib/data";
 import { formatMoney } from "@/lib/format";
 import { ocrReceipt } from "@/lib/ocr";
-import { addItemForm, deleteExpenseForm } from "../../actions";
+import { addItemForm, deleteExpenseForm, restoreExpenseForm } from "../../actions";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
 // Route param is the EXPENSE id; its receipt (if any) is itemized here.
@@ -22,7 +22,14 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
       <h1 className="text-2xl font-bold">Receipt — {expense.description}</h1>
       {expense.voidedAt && (
         <div className="rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-600">
-          This expense was <strong>voided</strong> on {expense.voidedAt.toISOString().slice(0, 10)} — it no longer counts toward anyone&rsquo;s balances. It is kept here as history.
+          This expense was <strong>voided</strong>{expense.voidedById ? <> by <strong>{expense.voidedById === me.id ? "you" : participants.get(expense.voidedById) ?? "a participant"}</strong></> : null} on {expense.voidedAt.toISOString().slice(0, 10)} — it no longer counts toward anyone&rsquo;s balances. It is kept here as history.
+          {expense.paidById === me.id && (
+            <form action={restoreExpenseForm} className="mt-2">
+              <input type="hidden" name="expenseId" value={expense.id} />
+              <Button type="submit" className="px-3 py-1.5 text-xs">Restore this expense</Button>
+              <span className="ml-2 text-xs text-neutral-500">You paid for it, so you can undo the void. The receipt file was removed when it was voided — you can upload it again after restoring.</span>
+            </form>
+          )}
         </div>
       )}
       {expense.receipt ? (
