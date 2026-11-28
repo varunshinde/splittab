@@ -118,7 +118,7 @@ run("N2: group invitations require acceptance (DB)", () => {
     expect((await data.getMyGroups(victim.id)).map((g: { id: string }) => g.id)).toContain(groupId);
   });
 
-  it("declining removes the invitation entirely; inviting an unregistered email creates an INVITED placeholder with no debt", async () => {
+  it("declining marks the invitation DECLINED (R10: remembered, not deleted); inviting an unregistered email creates an INVITED placeholder with no debt", async () => {
     jar.set("session", tokenM);
     await expect(actions.addGroupMemberForm(form({ groupId, email: ghostEmail }))).rejects.toThrow(/NEXT_REDIRECT/);
     const ghost = await prisma.user.findUnique({ where: { email: ghostEmail } });
@@ -139,7 +139,10 @@ run("N2: group invitations require acceptance (DB)", () => {
     const group2 = url2.replace("NEXT_REDIRECT /groups/", "");
     jar.set("session", tokenV);
     await expect(actions.declineGroupInviteForm(form({ groupId: group2 }))).rejects.toThrow(/NEXT_REDIRECT/);
-    expect(await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: victim.id, groupId: group2 } } })).toBeNull();
+    // R10: the row stays as DECLINED — no access, but re-inviting is refused.
+    const declined = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: victim.id, groupId: group2 } } });
+    expect(declined.status).toBe("DECLINED");
+    expect((await data.getGroupInvitations(victim.id)).some((i: { group: { id: string } }) => i.group.id === group2)).toBe(false);
     await prisma.group.deleteMany({ where: { id: group2 } }).catch(() => {});
   }, 30000);
 });

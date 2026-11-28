@@ -6,7 +6,7 @@ import { expenseToCurrency, settlementToCurrency } from "@/lib/convert";
 import { formatMoney } from "@/lib/format";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card } from "@/components/ui/ui";
-import { acceptGroupInviteForm, declineGroupInviteForm } from "../actions";
+import { acceptGroupInviteForm, blockUserForm, declineGroupInviteForm } from "../actions";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
@@ -58,7 +58,7 @@ export default async function DashboardPage() {
         <Card className="border-brand/40 bg-brand-light/40">
           <h2 className="mb-2 font-semibold">Group invitations</h2>
           <div className="space-y-2">
-            {invitations.map(({ group, invitedByName }) => (
+            {invitations.map(({ group, invitedById, invitedByName }) => (
               <div key={group.id} className="flex flex-wrap items-center gap-3">
                 <span className="min-w-0 flex-1 text-sm">
                   <strong>{group.name}</strong>{invitedByName ? <> — invited by {invitedByName}</> : null}
@@ -71,6 +71,12 @@ export default async function DashboardPage() {
                   <input type="hidden" name="groupId" value={group.id} />
                   <Button type="submit" variant="secondary" className="px-3 py-1.5 text-xs">Decline</Button>
                 </form>
+                {invitedById && (
+                  <form action={blockUserForm}>
+                    <input type="hidden" name="friendId" value={invitedById} />
+                    <Button type="submit" variant="ghost" className="px-3 py-1.5 text-xs text-neutral-400 hover:text-red-600">Block inviter</Button>
+                  </form>
+                )}
               </div>
             ))}
           </div>

@@ -38,6 +38,32 @@ within a few days; please allow reasonable time for a fix before disclosing.
 - **Flash messages** travel as short codes mapped to fixed strings, so
   crafted links can't spoof messages on app pages.
 
+## Re-audit 2 hardening
+
+- **Activity** stores user ids and non-PII parameters, never names or
+  emails in free text; feeds render names from current user rows, so a
+  deleted account reads as "Deleted user" everywhere with no text
+  scrubbing of other people's messages.
+- **Group invitations** confer nothing until accepted — including the
+  data export, which only includes groups the user actually belongs to.
+  A decline is remembered per group (no re-invite loop), the invitation
+  card offers a block, and an invitation from someone the invitee has
+  blocked is recorded as a suppressed pending invite (indistinguishable
+  to the inviter, never surfaced to the invitee).
+- **Settlements** are two-party facts at every step: recording starts
+  them pending, and voiding a confirmed settlement is itself a request
+  the other party must agree to. Pending settlements are capped per pair.
+- **Receipts** belong to the payer: only the payer can upload/replace,
+  voided expenses reject uploads and items, and quota accounting clamps
+  at zero. A voided expense shows who voided it and when, and the payer
+  can restore it.
+- **Client IPs** are trusted only when `TRUST_PROXY=1` (a proxy that
+  overwrites `X-Forwarded-For`); a per-email login failure backstop
+  applies regardless of IP. Settings password checks share the login
+  lockout. Trusted-device rows expire after 90 days (sliding).
+- **Friend expenses** cannot place two people who are not friends with
+  each other into a shared ledger; that is what groups are for.
+
 ## Scope notes
 
 The Docker setup is for local development: Postgres is bound to localhost

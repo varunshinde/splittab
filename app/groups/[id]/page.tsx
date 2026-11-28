@@ -9,7 +9,7 @@ import { formatMoney } from "@/lib/format";
 import { computeBalances, computeSimplifiedDebts } from "@/lib/debt";
 import { convertCurrency } from "@/lib/currency";
 import { hasProAccess } from "@/lib/pro";
-import { acceptGroupInviteForm, addGroupExpenseForm, addGroupMemberForm, confirmSettlementForm, confirmVoidSettlementForm, declineGroupInviteForm, grantTripPassForm, leaveGroupForm, recordSettlementForm, rejectSettlementForm, rejectVoidSettlementForm, voidSettlementForm } from "../../actions";
+import { acceptGroupInviteForm, addGroupExpenseForm, addGroupMemberForm, blockUserForm, confirmSettlementForm, confirmVoidSettlementForm, declineGroupInviteForm, grantTripPassForm, leaveGroupForm, recordSettlementForm, rejectSettlementForm, rejectVoidSettlementForm, voidSettlementForm } from "../../actions";
 import { SpendingCharts } from "@/components/Charts";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
@@ -64,6 +64,12 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
               <input type="hidden" name="groupId" value={id} />
               <Button type="submit" variant="secondary">Decline</Button>
             </form>
+            {myMembership.invitedById && (
+              <form action={blockUserForm}>
+                <input type="hidden" name="friendId" value={myMembership.invitedById} />
+                <Button type="submit" variant="ghost" className="text-red-600">Block inviter</Button>
+              </form>
+            )}
           </div>
         </Card>
       </div>
