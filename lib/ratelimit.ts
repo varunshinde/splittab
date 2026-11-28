@@ -89,9 +89,19 @@ export async function checkEmailSendIpThrottle(kind: string, ip: string): Promis
   return isEmailSendIpThrottled(attempts);
 }
 
-export async function checkLoginLockout(email: string): Promise<boolean> {
+export async function checkLoginLockout(email: string, ip?: string): Promise<boolean> {
+  // F4 residual (re-audit): the lockout is scoped to the (email, IP) PAIR.
+  // Scoped to the email alone, anyone could keep a chosen victim locked
+  // out forever with 5 bad guesses every 15 minutes from their own IP.
+  // Pair-scoping means an attacker's failures lock out only the
+  // attacker's IP for that account; the victim's own logins are
+  // unaffected. The global per-IP failure cap still bounds spraying,
+  // and a correct password from a new IP still faces the device-code
+  // gate. The "unknown" IP (no proxy headers) falls back to email-only
+  // scope, since unrelated users could share that bucket.
+  const scoped = ip && ip !== "unknown" ? { ip } : {};
   const attempts = await prisma.loginAttempt.findMany({
-    where: { kind: "login", email, createdAt: { gte: new Date(Date.now() - LOGIN_WINDOW_MS - LOGIN_LOCKOUT_MS) } },
+    where: { kind: "login", email, ...scoped, createdAt: { gte: new Date(Date.now() - LOGIN_WINDOW_MS - LOGIN_LOCKOUT_MS) } },
     orderBy: { createdAt: "desc" },
     take: 50,
   }).catch(() => []);

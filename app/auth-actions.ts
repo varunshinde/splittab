@@ -173,14 +173,14 @@ export async function loginAction(formData: FormData) {
   const password = String(formData.get("password") ?? "");
 
   // Per-IP throttle first (stops password spraying across accounts), then
-  // the per-email lockout. Both answer with the same generic error.
+  // the per-(email, IP) lockout. Both answer with the same generic error.
   if (await checkLoginIpThrottle(ip)) {
     await recordAttempt("login", email, ip, false);
     backTo("/login", "invalid_credentials");
   }
   // Lockout check BEFORE credential verification; the error stays generic so
   // the caller can't tell lockout apart from a wrong password.
-  if (await checkLoginLockout(email)) {
+  if (await checkLoginLockout(email, ip)) {
     backTo("/login", "invalid_credentials");
   }
   const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);
