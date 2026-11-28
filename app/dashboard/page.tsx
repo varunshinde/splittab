@@ -3,6 +3,8 @@ import { requireUser } from "@/lib/auth";
 import { getGroupInvitations, getMyExpenses, getMyGroups, getMySettlements } from "@/lib/data";
 import { dashboardTotals, myNet, pairwiseNets } from "@/lib/balances";
 import { expenseToCurrency, settlementToCurrency } from "@/lib/convert";
+import { convertCurrency } from "@/lib/currency";
+import { DonutChart, MonthlyBars } from "@/components/Charts";
 import { formatMoney } from "@/lib/format";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card } from "@/components/ui/ui";
@@ -35,6 +37,26 @@ export default async function DashboardPage() {
   const owedToMe = [...nets.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const iOwe = [...nets.entries()].filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]);
   const isNewUser = expensesRaw.length === 0 && groups.length === 0;
+
+  // Personal insights: MY share of every non-voided expense (converted to my
+  // default currency), by category and by month, plus my largest shares.
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const myCatMap = new Map<string, number>();
+  const myMonthMap = new Map<string, number>();
+  const myShares: { id: string; description: string; cents: number; date: Date; where: string; href: string }[] = [];
+  for (const e of expensesRaw) {
+    if (e.voidedAt) continue;
+    const mine = e.splits.find((s) => s.userId === me.id);
+    if (!mine || mine.amountOwedInCents <= 0) continue;
+    const cents = convertCurrency(mine.amountOwedInCents, e.currency, cur);
+    myCatMap.set(e.category, (myCatMap.get(e.category) ?? 0) + cents / 100);
+    const mk = e.date.toISOString().slice(0, 7);
+    myMonthMap.set(mk, (myMonthMap.get(mk) ?? 0) + cents / 100);
+    myShares.push({ id: e.id, description: e.description, cents, date: e.date, where: e.group ? e.group.name : "Friend expense", href: e.group ? `/groups/${e.group.id}` : `/receipts/${e.id}` });
+  }
+  const myByMonth = [...myMonthMap.entries()].sort().slice(-6).map(([key, amount]) => ({ month: `${MONTH_NAMES[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`, amount }));
+  const myByCategory = [...myCatMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const myLargest = [...myShares].sort((a, b) => b.cents - a.cents).slice(0, 5);
 
   const personRow = (userId: string, net: number) => {
     const u = userById.get(userId);
@@ -99,6 +121,35 @@ export default async function DashboardPage() {
           <div className="mt-1 text-lg font-bold text-brand">{formatMoney(totals.youAreOwed, cur)}</div>
         </div>
       </Card>
+
+      {!isNewUser && myShares.length > 0 && (
+        <>
+          <Card>
+            <h2 className="mb-3 font-semibold">Your spending insights</h2>
+            <div className="grid gap-6 md:grid-cols-2">
+              <MonthlyBars data={myByMonth} title="Your share by month" />
+              <DonutChart data={myByCategory} title="Your share by category" />
+            </div>
+          </Card>
+          <Card>
+            <h2 className="mb-1 font-semibold">Your largest expenses</h2>
+            <p className="mb-2 text-sm text-neutral-500">Ranked by your share of each bill, in {cur}.</p>
+            <div className="divide-y divide-neutral-100">
+              {myLargest.map((s, i) => (
+                <Link key={s.id} href={s.href} className="flex items-center gap-3 py-2 hover:bg-neutral-50">
+                  <span className="w-6 text-sm font-bold text-neutral-400">#{i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{s.description}</span>
+                    <span className="block text-xs text-neutral-500">{s.where} · {s.date.toISOString().slice(0, 10)}</span>
+                  </span>
+                  <span className="text-sm text-neutral-500">your share</span>
+                  <b>{formatMoney(s.cents, cur)}</b>
+                </Link>
+              ))}
+            </div>
+          </Card>
+        </>
+      )}
 
       {isNewUser && (
         <Card className="border-brand/40 bg-brand-light p-6 text-center">

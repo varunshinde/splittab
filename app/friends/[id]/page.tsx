@@ -9,6 +9,8 @@ import { renderActivity, userLabel, type LabelUser } from "@/lib/activity-render
 import { formatMoney } from "@/lib/format";
 import { confirmSettlementForm, confirmVoidSettlementForm, rejectSettlementForm, rejectVoidSettlementForm, settleFriendForm, voidSettlementForm } from "../../actions";
 import { Avatar } from "@/components/Avatar";
+import { DonutChart, MonthlyBars } from "@/components/Charts";
+import { convertCurrency } from "@/lib/currency";
 import { Button, Card, Input, Label } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
 
@@ -68,6 +70,26 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
     ...settlements.map((s) => ({ kind: "settlement" as const, at: s.createdAt, settlement: s })),
   ].sort((a, b) => b.at.getTime() - a.at.getTime());
 
+  // Pair insights: everything the two of us share (friend + group expenses),
+  // converted to my currency — shared volume by month and category, and who
+  // fronted it. Voided expenses are history only and excluded.
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const pairMonthMap = new Map<string, number>();
+  const pairCatMap = new Map<string, number>();
+  const pairPayerMap = new Map<string, number>();
+  for (const e of expenses) {
+    if (e.voidedAt) continue;
+    const base = convertCurrency(e.amountInCents, e.currency, cur) / 100;
+    const mk = e.date.toISOString().slice(0, 7);
+    pairMonthMap.set(mk, (pairMonthMap.get(mk) ?? 0) + base);
+    pairCatMap.set(e.category, (pairCatMap.get(e.category) ?? 0) + base);
+    const payerName = e.paidById === me.id ? "You" : e.paidById === friendId ? friend.name : e.paidBy.name;
+    pairPayerMap.set(payerName, (pairPayerMap.get(payerName) ?? 0) + base);
+  }
+  const pairByMonth = [...pairMonthMap.entries()].sort().slice(-6).map(([key, amount]) => ({ month: `${MONTH_NAMES[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`, amount }));
+  const pairByCategory = [...pairCatMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const pairByPayer = [...pairPayerMap.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
@@ -96,6 +118,26 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
           </form>
         )}
       </Card>
+
+      {pairByMonth.length > 0 && (
+        <Card>
+          <h2 className="mb-3 font-semibold">You &amp; {friend.name} in numbers</h2>
+          <div className="grid gap-6 md:grid-cols-2">
+            <MonthlyBars data={pairByMonth} title="Shared spending by month" />
+            <DonutChart data={pairByCategory} title="Shared spending by category" />
+          </div>
+          {pairByPayer.length > 0 && (
+            <div className="mt-4 border-t border-neutral-100 pt-3">
+              <div className="mb-1 text-sm font-medium">Who fronted it</div>
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-neutral-600">
+                {pairByPayer.map((p) => (
+                  <span key={p.name}>{p.name}: <b className="text-neutral-800">{formatMoney(Math.round(p.value * 100), cur)}</b></span>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="space-y-2">
         {history.length === 0 && <Card className="p-6 text-center text-sm text-neutral-500">No expenses with {friend.name} yet. <Link href={`/expenses/new?friend=${friend.id}`} className="font-semibold text-brand hover:underline">Add the first one</Link>.</Card>}
