@@ -5,12 +5,19 @@ on:
     branches: [main]
   pull_request:
 
+# N11: least privilege — the job only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Actions pinned by commit SHA (N11); the tag is kept in a comment
+      # so updates stay readable. Dependabot's github-actions ecosystem
+      # keeps the pins current.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -23,10 +30,10 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
         env:
-          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
       - run: npm test
       - name: Build
         run: npm run build
         env:
-          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
           NEXT_PUBLIC_APP_URL: http://localhost:3000
