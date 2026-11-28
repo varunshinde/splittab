@@ -8,6 +8,7 @@ for (const line of fs.readFileSync(new URL("../.env.local", import.meta.url), "u
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
 }
 
+process.env.TRUST_PROXY = "1"; // these tests run behind a trusted proxy
 const jar = new Map<string, string>();
 (globalThis as Record<string, unknown>).__cookieJar = jar;
 (globalThis as Record<string, unknown>).__testIp = `203.0.113.${Math.floor(Math.random() * 200) + 10}`;

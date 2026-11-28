@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { createSession, destroySession, getCurrentUser, requireUser, SESSION_COOKIE } from "@/lib/auth";
 import { DUMMY_PASSWORD_HASH, generateSessionToken, hashPassword, hashToken, validateNewPassword, verifyPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth-utils";
 import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
-import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
+import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginEmailBackstop, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { deviceCodeEmailHtml, existingAccountEmailHtml, getAppUrl, newSigninAlertEmailHtml, resetEmailHtml, sendEmail, verificationEmailHtml, type SigninContext } from "@/lib/mail";
 import {
   challengeState, describeDevice, deviceTrustExpiry, generateDeviceToken, generateLoginCode, hashDeviceToken, hashLoginCode, locationChanged,
@@ -181,6 +181,11 @@ export async function loginAction(formData: FormData) {
   // Lockout check BEFORE credential verification; the error stays generic so
   // the caller can't tell lockout apart from a wrong password.
   if (await checkLoginLockout(email, ip)) {
+    backTo("/login", "invalid_credentials");
+  }
+  // R4: IP-independent backstop — rotating or spoofed IPs cannot walk
+  // around this one.
+  if (await checkLoginEmailBackstop(email)) {
     backTo("/login", "invalid_credentials");
   }
   const user = await prisma.user.findUnique({ where: { email } }).catch(() => null);

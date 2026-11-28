@@ -89,8 +89,7 @@ export async function checkEmailSendIpThrottle(kind: string, ip: string): Promis
   return isEmailSendIpThrottled(attempts);
 }
 
-export async function checkLoginLockout(email: string, ip?: string): Promise<boolean> {
-  // F4 residual (re-audit): the lockout is scoped to the (email, IP) PAIR.
+export async function checkLoginLockout(email: string, ip?: string): Promise<boolean> {  // F4 residual (re-audit): the lockout is scoped to the (email, IP) PAIR.
   // Scoped to the email alone, anyone could keep a chosen victim locked
   // out forever with 5 bad guesses every 15 minutes from their own IP.
   // Pair-scoping means an attacker's failures lock out only the
@@ -106,6 +105,34 @@ export async function checkLoginLockout(email: string, ip?: string): Promise<boo
     take: 50,
   }).catch(() => []);
   return isLockedOut(attempts);
+}
+
+// R4 backstop: a coarse per-email failure cap that ignores the IP
+// entirely. The (email, IP) pair lockout can be walked around by
+// rotating IPs (or by spoofing the forwarding header where no trusted
+// proxy overwrites it); this cap cannot. 20 failures within an hour
+// with no success since, and the most recent failure under 15 minutes
+// ago, locks the email briefly — high enough that a legitimate user
+// mistyping never reaches it, low enough to make online guessing
+// pointless (and a correct password still faces the device-code gate).
+export const EMAIL_BACKSTOP_MAX_FAILURES = 20;
+export const EMAIL_BACKSTOP_WINDOW_MS = 60 * 60 * 1000;
+
+export async function checkLoginEmailBackstop(email: string): Promise<boolean> {
+  const attempts = await prisma.loginAttempt.findMany({
+    where: { kind: "login", email, createdAt: { gte: new Date(Date.now() - EMAIL_BACKSTOP_WINDOW_MS) } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  }).catch(() => []);
+  let failures = 0;
+  let lastFailureAt: number | null = null;
+  for (const a of attempts) {
+    if (a.succeeded) break; // a success resets the streak
+    failures += 1;
+    if (lastFailureAt === null) lastFailureAt = a.createdAt.getTime();
+  }
+  if (failures < EMAIL_BACKSTOP_MAX_FAILURES || lastFailureAt === null) return false;
+  return Date.now() - lastFailureAt < LOGIN_LOCKOUT_MS;
 }
 
 // Per-IP login throttle: the per-email lockout alone lets one IP spray a
@@ -175,6 +202,15 @@ export async function recordAction(kind: ActionKind, userEmail: string, ip: stri
  *  header at the edge); behind a self-hosted proxy you must ensure the proxy
  *  sets it, or clients can spoof it to dodge per-IP limits (F4). */
 export function clientIp(headersList: { get(name: string): string | null }): string {
+  // R4: forwarding headers are only believable when a proxy the operator
+  // controls overwrites them. TRUST_PROXY=1 is set on Vercel (which
+  // always overwrites X-Forwarded-For). Everywhere else — including the
+  // shipped docker-compose, which publishes the app port directly — a
+  // client could otherwise name its own IP and walk around every
+  // IP-based limit, so the headers are ignored and the IP is "unknown"
+  // (per-IP caps exempt that bucket; the per-email backstop below and
+  // the email-scoped lockout fallback still apply).
+  if (process.env.TRUST_PROXY !== "1") return "unknown";
   const xff = headersList.get("x-forwarded-for");
   if (xff) return xff.split(",")[0].trim().slice(0, 64);
   return (headersList.get("x-real-ip") ?? "unknown").slice(0, 64);
