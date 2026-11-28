@@ -9,9 +9,9 @@ import { Button } from "@/components/ui/ui";
 
 export const metadata: Metadata = { title: "SplitTab", description: "SplitTab — split expenses with friends and groups" };
 
-function Logo() {
+function Logo({ href }: { href: string }) {
   return (
-    <Link href="/dashboard" className="flex items-center gap-2 text-lg font-bold tracking-tight text-ink">
+    <Link href={href} className="flex items-center gap-2 text-lg font-bold tracking-tight text-ink">
       <img src="/logo-mark.svg" alt="" className="h-8 w-8" />
       SplitTab
     </Link>
@@ -27,7 +27,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <>
             <header className="border-b border-neutral-200 bg-white">
               <div className="mx-auto flex max-w-6xl items-center justify-between p-3">
-                <Logo />
+                <Logo href="/" />
                 <div className="flex items-center gap-2">
                   <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-semibold text-brand hover:bg-brand-light">Log in</Link>
                   <Link href="/signup"><Button>Sign up free</Button></Link>
@@ -40,7 +40,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <>
             <header className="sticky top-0 z-20 border-b border-neutral-200 bg-white">
               <div className="mx-auto flex max-w-6xl items-center gap-3 p-3">
-                <Logo />
+                <Logo href="/dashboard" />
                 <div className="ml-auto flex items-center gap-2">
                   <Link href="/settle"><Button variant="owe">Settle up</Button></Link>
                   <Link href="/expenses/new"><Button>+ Add expense</Button></Link>
