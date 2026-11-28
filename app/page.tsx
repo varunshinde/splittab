@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { Avatar } from "@/components/Avatar";
+import { DemoPlayground } from "@/components/DemoPlayground";
 import { Button, Card } from "@/components/ui/ui";
 
 export const dynamic = "force-dynamic";
@@ -122,7 +123,7 @@ export default async function Home() {
           </p>
           <div className="flex flex-wrap justify-center gap-3 lg:justify-start">
             <Link href="/signup"><Button className="px-7 py-3 text-base">Sign up free</Button></Link>
-            <Link href="/login"><Button variant="secondary" className="px-7 py-3 text-base">Log in</Button></Link>
+            <a href="#demo"><Button variant="secondary" className="px-7 py-3 text-base">Try the live demo</Button></a>
           </div>
           <ul className="flex flex-wrap justify-center gap-x-5 gap-y-1.5 text-sm text-neutral-600 lg:justify-start">
             {["Free to use", "No ads", "Open source", "2-minute setup"].map((t) => (
@@ -131,6 +132,20 @@ export default async function Home() {
           </ul>
         </div>
         <HeroMock />
+      </section>
+
+      {/* Interactive demo */}
+      <section id="demo" className="scroll-mt-24">
+        <h2 className="mb-2 text-center text-3xl font-black tracking-tight">Try it right here — no account needed</h2>
+        <p className="mx-auto mb-8 max-w-xl text-center text-neutral-600">
+          This is a working miniature of SplitTab, running entirely in your browser. Add an expense, watch the
+          balances move, settle up the way the real app does — then decide if it&apos;s for you.
+        </p>
+        <DemoPlayground />
+        <p className="mt-6 text-center text-sm text-neutral-600">
+          Like what you see? <Link href="/signup" className="font-semibold text-brand hover:underline">Create your free account</Link> and
+          your real groups work exactly like this — plus receipts, currencies, and history that sticks around.
+        </p>
       </section>
 
       {/* How it works */}
