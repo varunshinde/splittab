@@ -11,12 +11,17 @@ export function proxy(request: NextRequest) {
   const isDev = process.env.NODE_ENV !== "production";
   const scriptSrc = isDev
     ? `'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval'`
-    : `'self' 'nonce-${nonce}' 'strict-dynamic'`;
+    : `'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'`;
   const csp = [
     "default-src 'self'",
     "img-src 'self' https: blob: data:",
     "style-src 'self' 'unsafe-inline'",
     `script-src ${scriptSrc}`,
+    // The receipt OCR worker (Tesseract WASM) loads same-origin from
+    // /ocr/; blob: covers its internal worker bootstrap. 'wasm-unsafe-eval'
+    // above permits WebAssembly compilation only — JS eval stays banned
+    // and the nonce + strict-dynamic rules are unchanged.
+    "worker-src 'self' blob:",
     "connect-src 'self'",
     "font-src 'self' data:",
     "frame-ancestors 'none'",

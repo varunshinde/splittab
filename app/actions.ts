@@ -600,6 +600,38 @@ export async function uploadReceiptForm(formData: FormData) {
   redirect(flashUrl(`/receipts/${expenseId}`, "notice", "receipt_uploaded"));
 }
 
+/**
+ * Bulk-add items produced by the in-browser receipt scan (OCR). The scan
+ * runs entirely on the user's device (Tesseract WASM); only the reviewed
+ * text lines reach the server, as ordinary unassigned items. The user
+ * reviews and edits every line in the scanner UI before submitting —
+ * nothing OCR reads is saved unreviewed.
+ */
+export async function addOcrItemsForm(formData: FormData) {
+  const me = await requireUser();
+  const expenseId = String(formData.get("expenseId") ?? "");
+  const expense = await getMyExpense(me.id, expenseId);
+  if (!expense) throw new Error("expense not found");
+  if (expense.voidedAt) throw new Error("expense is voided");
+  const descs = formData.getAll("itemDesc").map(String);
+  const amounts = formData.getAll("itemAmount").map(String);
+  const included = new Set(formData.getAll("includeIdx").map(String));
+  const rows: { expenseId: string; description: string; amountInCents: number; assignedToUserIds: string[] }[] = [];
+  for (let i = 0; i < Math.min(descs.length, amounts.length, 60); i++) {
+    if (!included.has(String(i))) continue;
+    const description = descs[i].trim().slice(0, 200);
+    const amountInCents = Math.round(parseFloat(amounts[i]) * 100);
+    if (description.length < 2 || !Number.isInteger(amountInCents) || amountInCents <= 0) continue;
+    rows.push({ expenseId, description, amountInCents, assignedToUserIds: [] });
+  }
+  if (rows.length === 0) {
+    redirect(flashUrl(`/receipts/${expenseId}`, "error", "ocr_no_items"));
+  }
+  await prisma.expenseItem.createMany({ data: rows });
+  revalidatePath(`/receipts/${expenseId}`);
+  redirect(flashUrl(`/receipts/${expenseId}`, "notice", "ocr_items_added"));
+}
+
 /** Upload a receipt at full resolution via the StorageProvider; enforces the
  *  per-user quota. Identity = session user; expense must be one of mine.
  *  Type is verified against the file's magic bytes (F7), storage is private,

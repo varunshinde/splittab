@@ -28,6 +28,7 @@ export const FLASH_MESSAGES = {
   pick_participant: "Pick at least one person to split with.",
   items_exceed_total: "Your items add up to more than the expense total. Fix the item amounts first.",
   receipt_missing: "Choose a receipt photo or file first.",
+  ocr_no_items: "The scan didn't produce any items to add. Check the amounts and try again, or add items manually.",
   // --- notices ---
   signup_check_email: "Check your email — we sent you a link to finish setting up your account. If you already have an account, you can just log in.",
   account_ready: "Your account is ready — log in with your new password.",
@@ -51,6 +52,7 @@ export const FLASH_MESSAGES = {
   settlement_void_declined: "Void request declined — the settlement stays confirmed and keeps counting.",
   itemization_applied: "Itemized split applied — everyone's share now follows the receipt items.",
   receipt_uploaded: "Receipt saved. You can itemize it below.",
+  ocr_items_added: "Scan items added — check the amounts, assign them, then apply the itemization when ready.",
 } as const;
 
 export type FlashCode = keyof typeof FLASH_MESSAGES;

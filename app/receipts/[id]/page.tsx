@@ -5,6 +5,7 @@ import { formatMoney } from "@/lib/format";
 import { flashText } from "@/lib/flash";
 import { itemizedSplits } from "@/lib/splits";
 import { addItemForm, applyItemizationForm, deleteExpenseForm, deleteItemForm, restoreExpenseForm, uploadReceiptForm } from "../../actions";
+import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { Button, Card, Input, Label } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
 // Route param is the EXPENSE id; its receipt (if any) is itemized here.
@@ -75,6 +76,9 @@ export default async function ReceiptPage({ params, searchParams }: { params: Pr
         )}
         {!expense.voidedAt && !isPayer && (
           <p className="mt-2 text-xs text-neutral-400">Only {nameOf(expense.paidById)}, who paid, can manage the receipt file.</p>
+        )}
+        {!expense.voidedAt && expense.receipt && (
+          <ReceiptScanner expenseId={expense.id} receiptId={expense.receipt.id} currency={expense.currency} />
         )}
       </Card>
 
