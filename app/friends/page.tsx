@@ -73,10 +73,14 @@ export default async function FriendsPage({ searchParams }: { searchParams: Prom
           <h2 className="px-2 pb-1 pt-2 font-semibold">Requests you sent</h2>
           {requests.outgoing.map((f) => (
             <div key={f.id} className="flex items-center gap-3 px-2 py-2.5">
-              <Avatar name={f.name} seed={f.email} />
+              {/* N6: show only the email I typed — rendering the account's
+                  real name here would turn "add a friend" into an
+                  email->name lookup oracle. The name appears once they
+                  accept and become a friend. */}
+              <Avatar name={f.email} seed={f.email} />
               <div className="min-w-0 flex-1">
-                <div className="font-medium">{f.name}</div>
-                <div className="truncate text-xs text-neutral-500">{f.email} · awaiting acceptance</div>
+                <div className="font-medium">{f.email}</div>
+                <div className="truncate text-xs text-neutral-500">awaiting acceptance</div>
               </div>
               <form action={cancelFriendRequestForm}>
                 <input type="hidden" name="friendId" value={f.id} />

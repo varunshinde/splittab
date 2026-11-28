@@ -222,10 +222,23 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
           <Card className="divide-y divide-neutral-100 py-2">
             {group.members.map((m) => (
               <div key={m.userId} className="flex items-center gap-3 px-2 py-2">
-                <Avatar name={m.user.name} seed={m.user.email} size="sm" />
+                {/* N6: before someone accepts, show only the invited email
+                    (never the account's real name — that was an email->name
+                    oracle). After acceptance, co-members see the name;
+                    the email itself is shown only to its owner. */}
+                <Avatar name={m.status === "INVITED" ? m.user.email : m.user.name} seed={m.user.email} size="sm" />
                 <div className="flex-1">
-                  <div className="font-medium">{m.userId === me.id ? "You" : m.user.name}{m.user.isPro ? " · Pro" : ""}</div>
-                  <div className="text-xs text-neutral-500">{m.user.email}{m.status === "INVITED" ? " · invitation pending" : m.user.isPlaceholder ? " · invited, not signed up yet" : ""}</div>
+                  {m.status === "INVITED" ? (
+                    <>
+                      <div className="font-medium">{m.user.email}</div>
+                      <div className="text-xs text-neutral-500">invitation pending{m.user.isPlaceholder ? " · not signed up yet" : ""}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="font-medium">{m.userId === me.id ? "You" : m.user.name}{m.user.isPro ? " · Pro" : ""}</div>
+                      <div className="text-xs text-neutral-500">{m.userId === me.id ? m.user.email : `Joined ${m.joinedAt.toISOString().slice(0, 10)}`}</div>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
