@@ -45,6 +45,18 @@ export async function sendEmail(input: { to: string; subject: string; html: stri
   }
 }
 
+/** Escape a value interpolated into email HTML (N9). Sign-in context
+ *  values (IP, geo, device) come from request headers — trusted on
+ *  Vercel, attacker-controlled on a self-hosted deployment. */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function wrap(title: string, bodyHtml: string): string {
   return `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">
     <h1 style="color:#1cc29f;font-size:20px">${title}</h1>
@@ -56,8 +68,8 @@ function wrap(title: string, bodyHtml: string): string {
 export function verificationEmailHtml(link: string): string {
   return wrap("Finish setting up your account", `
     <p>Welcome to SplitTab! Click below to choose your password and activate your account:</p>
-    <p><a href="${link}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Set up my account</a></p>
-    <p>Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
+    <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Set up my account</a></p>
+    <p>Or paste this link into your browser:<br><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p>
     <p>This link expires in 24 hours.</p>`);
 }
 
@@ -77,17 +89,17 @@ export interface SigninContext {
 
 function signinContextRows(ctx: SigninContext): string {
   return `<table style="border-collapse:collapse;font-size:14px">
-    <tr><td style="padding:2px 12px 2px 0;color:#888">Device</td><td>${ctx.deviceLabel}</td></tr>
-    <tr><td style="padding:2px 12px 2px 0;color:#888">Location</td><td>${ctx.location}</td></tr>
-    <tr><td style="padding:2px 12px 2px 0;color:#888">IP address</td><td>${ctx.ip}</td></tr>
-    <tr><td style="padding:2px 12px 2px 0;color:#888">When</td><td>${ctx.when}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#888">Device</td><td>${escapeHtml(ctx.deviceLabel)}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#888">Location</td><td>${escapeHtml(ctx.location)}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#888">IP address</td><td>${escapeHtml(ctx.ip)}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#888">When</td><td>${escapeHtml(ctx.when)}</td></tr>
   </table>`;
 }
 
 export function deviceCodeEmailHtml(code: string, ctx: SigninContext): string {
   return wrap("Your SplitTab sign-in code", `
     <p>Someone is signing in to your SplitTab account from a new device. If that's you, enter this code to finish signing in:</p>
-    <p style="font-size:28px;font-weight:700;letter-spacing:4px;color:#111">${code}</p>
+    <p style="font-size:28px;font-weight:700;letter-spacing:4px;color:#111">${escapeHtml(code)}</p>
     ${signinContextRows(ctx)}
     <p>The code expires in 10 minutes. If this wasn't you, do NOT share the code — your account is safe as long as the code stays secret. Consider changing your password.</p>`);
 }
@@ -103,7 +115,7 @@ export function newSigninAlertEmailHtml(kind: "device" | "location", ctx: Signin
 export function resetEmailHtml(link: string): string {
   return wrap("Reset your password", `
     <p>We received a request to reset your SplitTab password:</p>
-    <p><a href="${link}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Reset my password</a></p>
-    <p>Or paste this link into your browser:<br><a href="${link}">${link}</a></p>
+    <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#1cc29f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Reset my password</a></p>
+    <p>Or paste this link into your browser:<br><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p>
     <p>This link expires in 1 hour. Resetting your password signs out all your sessions.</p>`);
 }

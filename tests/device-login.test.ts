@@ -158,6 +158,27 @@ run("new-device login: email code challenge + trusted devices (DB, mail mocked)"
     expect(jar.get("session")).toBeUndefined();
   }, 30000);
 
+  it("N8: after 5 wrong codes the challenge is locked — even the RIGHT code is refused", async () => {
+    await prisma.session.deleteMany({ where: { userId } });
+    await prisma.trustedDevice.deleteMany({ where: { userId } });
+    await prisma.loginAttempt.deleteMany({ where: { kind: "device_code", email } });
+    jar.clear();
+    mail.sendEmail.mockClear();
+    await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/verify-device/);
+    const calls = mail.sendEmail.mock.calls;
+    const code = calls[calls.length - 1][0].html as string;
+    const wrong = code === "000000" ? "111111" : "000000";
+    for (let i = 0; i < 5; i++) {
+      await expect(authActions.verifyDeviceAction(form({ code: wrong })))
+        .rejects.toThrow(/NEXT_REDIRECT \/verify-device\?error=code_mismatch/);
+    }
+    const challenge = await prisma.loginChallenge.findFirst({ where: { userId, usedAt: null }, orderBy: { createdAt: "desc" } });
+    expect(challenge.attempts).toBe(5);
+    await expect(authActions.verifyDeviceAction(form({ code })))
+      .rejects.toThrow(/NEXT_REDIRECT \/login\?error=signin_code_invalid/);
+    expect(jar.get("session")).toBeUndefined();
+  }, 30000);
+
   it("after the device is revoked, login challenges again", async () => {
     await prisma.session.deleteMany({ where: { userId } });
     await prisma.trustedDevice.deleteMany({ where: { userId } });

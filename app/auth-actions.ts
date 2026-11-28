@@ -9,7 +9,7 @@ import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle,
 import { deviceCodeEmailHtml, existingAccountEmailHtml, getAppUrl, newSigninAlertEmailHtml, resetEmailHtml, sendEmail, verificationEmailHtml, type SigninContext } from "@/lib/mail";
 import {
   challengeState, describeDevice, generateDeviceToken, generateLoginCode, hashDeviceToken, hashLoginCode, locationChanged,
-  locationLabel, loginCodeMatches, parseGeo, DEVICE_CHALLENGE_COOKIE, DEVICE_TOKEN_COOKIE, DEVICE_TOKEN_MAX_AGE_S, LOGIN_CODE_TTL_MS,
+  locationLabel, loginCodeMatches, parseGeo, DEVICE_CHALLENGE_COOKIE, DEVICE_TOKEN_COOKIE, DEVICE_TOKEN_MAX_AGE_S, LOGIN_CODE_MAX_ATTEMPTS, LOGIN_CODE_TTL_MS,
 } from "@/lib/device";
 import { flashUrl, passwordFlashCode, type FlashCode } from "@/lib/flash";
 import { RESET_TTL_MS, tokenExpiry, tokenState, VERIFICATION_TTL_MS } from "@/lib/tokens";
@@ -86,11 +86,20 @@ export async function signupAction(formData: FormData) {
   // response never reveals whether the email was new, a placeholder claim,
   // or an already-registered account.
   const done = flashUrl("/login", "notice", "signup_check_email");
+  // N7: per-EMAIL send cap for signup mail (same 1/min + 5/day as resend).
+  // The old code only throttled per IP, so rotating IPs could flood one
+  // victim's inbox with signup emails. When throttled we silently skip
+  // the send — the outward response stays the generic `done`.
+  const signupMailThrottled =
+    (await checkEmailSendThrottle("verify_signup", email)) || (await checkEmailSendIpThrottle("verify_signup", ip));
   if (decision.kind === "duplicate-email") {
     // Already registered: create nothing, change nothing. The owner gets a
     // notice email (which doubles as an alert if it wasn't them).
     await recordAttempt("signup", email, ip, false);
-    await sendEmail({ to: email, subject: "Your SplitTab account", html: existingAccountEmailHtml() });
+    if (!signupMailThrottled) {
+      await sendEmail({ to: email, subject: "Your SplitTab account", html: existingAccountEmailHtml() });
+      await recordAttempt("verify_signup", email, ip, true);
+    }
     redirect(done);
   }
   let userId: string;
@@ -103,10 +112,17 @@ export async function signupAction(formData: FormData) {
     userId = user.id;
   }
   await recordAttempt("signup", email, ip, true);
+  if (signupMailThrottled) {
+    // Account row exists (or is a placeholder claim) but this email has
+    // hit its send cap — no email goes out, same generic outcome. The
+    // owner can still use the resend link on the login page later.
+    redirect(done);
+  }
   const sent = await sendVerificationEmail(userId, email);
   if (!sent.ok) {
     backTo("/signup", "signup_send_failed");
   }
+  await recordAttempt("verify_signup", email, ip, true);
   redirect(done);
 }
 
@@ -261,12 +277,22 @@ export async function verifyDeviceAction(formData: FormData) {
   const challenge = await prisma.loginChallenge
     .findUnique({ where: { id: challengeId }, include: { user: true } })
     .catch(() => null);
-  if (!challenge || challengeState(challenge) !== "valid") {
+  if (!challenge || challengeState(challenge) === "missing" || challenge.usedAt) {
+    store.delete(DEVICE_CHALLENGE_COOKIE);
+    redirect(expired);
+  }
+  // N8: claim the attempt ATOMICALLY before comparing — the old
+  // read-then-increment let parallel guesses all pass the attempts<5
+  // check. Only the request that increments within the cap proceeds.
+  const claimed = await prisma.loginChallenge.updateMany({
+    where: { id: challenge.id, usedAt: null, attempts: { lt: LOGIN_CODE_MAX_ATTEMPTS }, expiresAt: { gt: new Date() } },
+    data: { attempts: { increment: 1 } },
+  });
+  if (claimed.count !== 1) {
     store.delete(DEVICE_CHALLENGE_COOKIE);
     redirect(expired);
   }
   if (!loginCodeMatches(code, challenge.codeHash)) {
-    await prisma.loginChallenge.update({ where: { id: challenge.id }, data: { attempts: { increment: 1 } } });
     redirect(flashUrl("/verify-device", "error", "code_mismatch"));
   }
   const consumed = await prisma.loginChallenge.updateMany({
@@ -377,10 +403,18 @@ export async function resetPasswordAction(formData: FormData) {
     redirect(flashUrl("/reset-password", "error", "reset_link_invalid"));
   }
   const passwordHash = await hashPassword(password);
+  // N7: an account whose passwordHash is still null was never actually
+  // claimed — its display name may have been chosen by whoever submitted
+  // the signup form (possibly not the owner). Treat it like a placeholder:
+  // when the inbox owner sets their first password via this reset, let
+  // them set the name too instead of inheriting the squatted one.
+  const prior = await prisma.user.findUnique({ where: { id: token.userId }, select: { passwordHash: true } });
+  const firstPassword = !prior?.passwordHash;
+  const chosenName = firstPassword ? capString(formData.get("name"), MAX_NAME_LEN, "name") : null;
   await prisma.user.update({
     where: { id: token.userId },
     // A completed reset also proves inbox ownership -> verify the email.
-    data: { passwordHash, emailVerifiedAt: new Date(), isPlaceholder: false },
+    data: { passwordHash, emailVerifiedAt: new Date(), isPlaceholder: false, ...(chosenName ? { name: chosenName } : {}) },
   });
   await prisma.session.deleteMany({ where: { userId: token.userId } }); // revoke ALL sessions
   // N1: a password reset also un-trusts every device — the reset may be
