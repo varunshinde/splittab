@@ -451,11 +451,34 @@ export async function deleteExpenseForm(formData: FormData) {
   redirect(expense.groupId ? `/groups/${expense.groupId}` : "/dashboard");
 }
 
+/** Restore a voided expense (R7): the PAYER can undo a void — the
+ *  expense counts again. The receipt file does not come back (voiding
+ *  removed it from storage); the payer can re-upload it. A restore is
+ *  written to activity like the void was. */
+export async function restoreExpenseForm(formData: FormData) {
+  const me = await requireUser();
+  const expenseId = String(formData.get("expenseId") ?? "");
+  const expense = await getMyExpense(me.id, expenseId);
+  if (!expense) throw new Error("expense not found");
+  if (!expense.voidedAt) throw new Error("expense is not voided");
+  if (expense.paidById !== me.id) throw new Error("only the payer can restore a voided expense");
+  await prisma.expense.update({
+    where: { id: expenseId },
+    data: { voidedAt: null, voidedById: null },
+  });
+  await prisma.activity.create({
+    data: { groupId: expense.groupId, userId: me.id, type: "expense_restored", subjectId: expense.paidById, message: `Expense "${expense.description}" restored`, data: { description: expense.description } },
+  });
+  revalidatePath("/dashboard");
+  redirect(expense.groupId ? `/groups/${expense.groupId}` : `/receipts/${expenseId}`);
+}
+
 export async function addItemForm(formData: FormData) {
   const me = await requireUser();
   const expenseId = String(formData.get("expenseId") ?? "");
   const expense = await getMyExpense(me.id, expenseId);
   if (!expense) throw new Error("expense not found");
+  if (expense.voidedAt) throw new Error("expense is voided");
   const amountInCents = Math.round(parseFloat(String(formData.get("amount") ?? "")) * 100);
   if (!Number.isInteger(amountInCents) || amountInCents < 0) throw new Error("item amount must be integer cents >= 0");
   const assignedRaw = String(formData.get("assignedToUserId") ?? "");
@@ -477,6 +500,13 @@ export async function uploadReceipt(expenseId: string, fileName: string, data: B
   const me = await requireUser();
   const expense = await getMyExpense(me.id, expenseId);
   if (!expense) throw new Error("expense not found");
+  // R5: the receipt is the PAYER's evidence and the storage quota is the
+  // payer's. Previously any participant could replace it — deleting the
+  // payer's file while the freed bytes were credited to the REPLACER's
+  // counter (which could go negative and mint quota). Payer only, and
+  // never on a voided expense.
+  if (expense.voidedAt) throw new Error("expense is voided");
+  if (expense.paidById !== me.id) throw new Error("only the payer can manage the receipt");
   assertValidUpload(fileName, data, mimeType);
   assertCanUpload(me.receiptStorageUsedBytes, BigInt(data.byteLength), me.receiptStorageQuotaBytes);
   const saved = await storage.save(fileName, data);
@@ -494,12 +524,34 @@ export async function uploadReceipt(expenseId: string, fileName: string, data: B
       where: { id: me.id },
       data: { receiptStorageUsedBytes: { decrement: old.fileSizeBytes } },
     }).catch(() => {});
+    // Clamp at zero: the counter must never go negative (a negative
+    // balance is spendable quota).
+    await prisma.user.updateMany({
+      where: { id: me.id, receiptStorageUsedBytes: { lt: 0 } },
+      data: { receiptStorageUsedBytes: BigInt(0) },
+    }).catch(() => {});
   }
   await ocrReceipt(saved.filePath); // stub: returns [] for manual itemization
   return receipt;
 }
 
 // --- Settlements -----------------------------------------------------------
+
+/** R6: cap unconfirmed settlements per pair — without it, one person
+ *  can flood the other with pending records (and the group feed with
+ *  activity lines) that the victim must wade through. */
+const MAX_PENDING_SETTLEMENTS_PER_PAIR = 10;
+async function assertPendingSettlementCapacity(recorderId: string, a: string, b: string) {
+  const n = await prisma.settlement.count({
+    where: {
+      recordedById: recorderId, status: "PENDING",
+      OR: [{ fromUserId: a, toUserId: b }, { fromUserId: b, toUserId: a }],
+    },
+  });
+  if (n >= MAX_PENDING_SETTLEMENTS_PER_PAIR) {
+    throw new Error("too many unconfirmed settlements with this person — ask them to confirm or reject the existing ones first");
+  }
+}
 
 /** Record a settlement payment. Session user must be one of the two parties. */
 export async function recordSettlementForm(formData: FormData) {
@@ -529,6 +581,7 @@ export async function recordSettlementForm(formData: FormData) {
       }));
     if (!ok) throw new Error("you can only settle up with someone you share expenses with");
   }
+  await assertPendingSettlementCapacity(me.id, fromUserId, toUserId);
   // N3: a settlement starts PENDING and moves no balances until the OTHER
   // party confirms it — recording "you paid me" can no longer rewrite
   // someone else's ledger unilaterally.
@@ -583,19 +636,57 @@ export async function rejectSettlementForm(formData: FormData) {
   redirect(flashUrl(back, "notice", "settlement_voided"));
 }
 
-/** Void a settlement (N3): the recorder can cancel their own PENDING
- *  entry; either party can void a CONFIRMED one. The row stays as the
- *  audit trail; it simply stops counting. */
+/** Void a settlement. A PENDING entry is cancelled by its recorder
+ *  (N3). A CONFIRMED settlement is a fact both parties agreed to, so
+ *  voiding it needs both parties too (R6): the first party's void
+ *  becomes a REQUEST — the settlement keeps counting — and it only
+ *  stops counting when the other party agrees (confirmVoidSettlement­
+ *  Form). The row always stays as the audit trail. */
 export async function voidSettlementForm(formData: FormData) {
   const me = await requireUser();
   const back = safeBackPath(formData.get("back"));
   const s = await mySettlement(me.id, String(formData.get("settlementId") ?? ""));
   if (s.status === "VOIDED") throw new Error("settlement already voided");
-  if (s.status === "PENDING" && s.recordedById !== me.id) throw new Error("only the recorder can cancel a pending settlement — reject it instead");
-  await prisma.settlement.update({ where: { id: s.id }, data: { status: "VOIDED" } });
-  await settlementActivity(s, me.id, "voided");
+  if (s.status === "VOID_REQUESTED") throw new Error("a void is already awaiting the other party");
+  if (s.status === "PENDING") {
+    if (s.recordedById !== me.id) throw new Error("only the recorder can cancel a pending settlement — reject it instead");
+    await prisma.settlement.update({ where: { id: s.id }, data: { status: "VOIDED" } });
+    await settlementActivity(s, me.id, "voided");
+    revalidatePath("/dashboard");
+    redirect(flashUrl(back, "notice", "settlement_voided"));
+  }
+  // CONFIRMED: record the request; balances do not change yet.
+  await prisma.settlement.update({ where: { id: s.id }, data: { status: "VOID_REQUESTED", voidRequestedById: me.id } });
+  await settlementActivity(s, me.id, "void_requested");
+  revalidatePath("/dashboard");
+  redirect(flashUrl(back, "notice", "settlement_void_requested"));
+}
+
+/** Agree to void a CONFIRMED settlement the other party asked to void
+ *  (R6). Only the party who did NOT request it can agree. */
+export async function confirmVoidSettlementForm(formData: FormData) {
+  const me = await requireUser();
+  const back = safeBackPath(formData.get("back"));
+  const s = await mySettlement(me.id, String(formData.get("settlementId") ?? ""));
+  if (s.status !== "VOID_REQUESTED") throw new Error("no void is pending for this settlement");
+  if (s.voidRequestedById === me.id) throw new Error("you cannot agree to your own void request");
+  await prisma.settlement.update({ where: { id: s.id }, data: { status: "VOIDED", voidRequestedById: null } });
+  await settlementActivity(s, me.id, "void_confirmed");
   revalidatePath("/dashboard");
   redirect(flashUrl(back, "notice", "settlement_voided"));
+}
+
+/** Decline a void request (or withdraw your own): the settlement goes
+ *  back to CONFIRMED and keeps counting (R6). */
+export async function rejectVoidSettlementForm(formData: FormData) {
+  const me = await requireUser();
+  const back = safeBackPath(formData.get("back"));
+  const s = await mySettlement(me.id, String(formData.get("settlementId") ?? ""));
+  if (s.status !== "VOID_REQUESTED") throw new Error("no void is pending for this settlement");
+  await prisma.settlement.update({ where: { id: s.id }, data: { status: "CONFIRMED", voidRequestedById: null } });
+  await settlementActivity(s, me.id, "void_rejected");
+  revalidatePath("/dashboard");
+  redirect(flashUrl(back, "notice", "settlement_void_declined"));
 }
 
 /** Friend-detail settle-up: direction is derived from the current net. */
@@ -619,6 +710,7 @@ export async function settleFriendForm(formData: FormData) {
   if (amountInCents <= 0) redirect(flashUrl(`/friends/${friendId}`, "notice", "already_settled"));
   const fromUserId = net > 0 ? friendId : me.id;
   const toUserId = net > 0 ? me.id : friendId;
+  await assertPendingSettlementCapacity(me.id, fromUserId, toUserId);
   // N3: even the one-click settle-up starts PENDING — it counts only
   // once the other party confirms it actually happened.
   await prisma.settlement.create({ data: { fromUserId, toUserId, amountInCents, groupId: null, status: "PENDING", recordedById: me.id } });

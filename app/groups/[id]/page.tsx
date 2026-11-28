@@ -9,7 +9,7 @@ import { formatMoney } from "@/lib/format";
 import { computeBalances, computeSimplifiedDebts } from "@/lib/debt";
 import { convertCurrency } from "@/lib/currency";
 import { hasProAccess } from "@/lib/pro";
-import { acceptGroupInviteForm, addGroupExpenseForm, addGroupMemberForm, confirmSettlementForm, declineGroupInviteForm, grantTripPassForm, leaveGroupForm, recordSettlementForm, rejectSettlementForm, voidSettlementForm } from "../../actions";
+import { acceptGroupInviteForm, addGroupExpenseForm, addGroupMemberForm, confirmSettlementForm, confirmVoidSettlementForm, declineGroupInviteForm, grantTripPassForm, leaveGroupForm, recordSettlementForm, rejectSettlementForm, rejectVoidSettlementForm, voidSettlementForm } from "../../actions";
 import { SpendingCharts } from "@/components/Charts";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
@@ -72,9 +72,10 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
 
   const balances = computeBalances(group.expenses);
   // Apply this group's CONFIRMED settlements on top of expense balances
-  // (N3: pending settlements move nothing until the other party confirms).
+  // (N3: pending settlements move nothing until the other party confirms;
+  // R6: VOID_REQUESTED still counts until the other party agrees).
   for (const s of group.settlements) {
-    if (s.status !== "CONFIRMED") continue;
+    if (s.status !== "CONFIRMED" && s.status !== "VOID_REQUESTED") continue;
     balances.set(s.fromUserId, (balances.get(s.fromUserId) ?? 0) + s.amountInCents);
     balances.set(s.toUserId, (balances.get(s.toUserId) ?? 0) - s.amountInCents);
   }
@@ -129,7 +130,7 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
             {group.expenses.map((e) => (
               <Card key={e.id} className="py-3">
                 <div className="flex justify-between"><span className="font-medium">{e.description} <span className="text-sm font-normal text-neutral-500">({e.category})</span>{e.voidedAt && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span>}</span><b className={e.voidedAt ? "text-neutral-400 line-through" : ""}>{formatMoney(e.amountInCents, e.currency)}</b></div>
-                <div className="text-sm text-neutral-500">Paid by {e.paidBy.name} · {e.date.toISOString().slice(0, 10)} · splits: {e.splits.map((s) => `${nameOf(s.userId)} ${formatMoney(s.amountOwedInCents, e.currency)}`).join(", ")}{e.voidedAt ? " · voided — no longer counts" : ""}</div>
+                <div className="text-sm text-neutral-500">Paid by {e.paidBy.name} · {e.date.toISOString().slice(0, 10)} · splits: {e.splits.map((s) => `${nameOf(s.userId)} ${formatMoney(s.amountOwedInCents, e.currency)}`).join(", ")}{e.voidedAt ? ` · voided by ${e.voidedById ? nameOf(e.voidedById) : "a participant"} on ${e.voidedAt.toISOString().slice(0, 10)} — no longer counts` : ""}</div>
                 {e.notes && <div className="text-sm text-neutral-500">📝 {e.notes}</div>}
                 {e.receiptId && <Link className="text-sm font-medium text-brand hover:underline" href={`/receipts/${e.id}`}>Receipt / itemize</Link>}
               </Card>
@@ -206,6 +207,7 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
                   <span className="flex-1">{s.fromUser.name} paid {s.toUser.name} <b>{formatMoney(s.amountInCents, s.currency)}</b> · {s.createdAt.toISOString().slice(0, 10)}
                     {s.status === "PENDING" && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">Pending confirmation</span>}
                     {s.status === "VOIDED" && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span>}
+                    {s.status === "VOID_REQUESTED" && <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs font-semibold text-red-700">Void requested</span>}
                   </span>
                   {s.status === "PENDING" && s.recordedById !== me.id && (s.fromUserId === me.id || s.toUserId === me.id) && (
                     <>
@@ -225,7 +227,28 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
                     <form action={voidSettlementForm}>
                       <input type="hidden" name="settlementId" value={s.id} />
                       <input type="hidden" name="back" value={`/groups/${id}?tab=balances`} />
-                      <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400 hover:text-red-600">{s.status === "PENDING" ? "Cancel entry" : "Void"}</Button>
+                      <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400 hover:text-red-600">{s.status === "PENDING" ? "Cancel entry" : "Request void"}</Button>
+                    </form>
+                  )}
+                  {s.status === "VOID_REQUESTED" && (s.fromUserId === me.id || s.toUserId === me.id) && s.voidRequestedById !== me.id && (
+                    <>
+                      <form action={confirmVoidSettlementForm}>
+                        <input type="hidden" name="settlementId" value={s.id} />
+                        <input type="hidden" name="back" value={`/groups/${id}?tab=balances`} />
+                        <Button type="submit" className="px-2.5 py-1 text-xs">Agree to void</Button>
+                      </form>
+                      <form action={rejectVoidSettlementForm}>
+                        <input type="hidden" name="settlementId" value={s.id} />
+                        <input type="hidden" name="back" value={`/groups/${id}?tab=balances`} />
+                        <Button type="submit" variant="secondary" className="px-2.5 py-1 text-xs">Keep it</Button>
+                      </form>
+                    </>
+                  )}
+                  {s.status === "VOID_REQUESTED" && s.voidRequestedById === me.id && (
+                    <form action={rejectVoidSettlementForm}>
+                      <input type="hidden" name="settlementId" value={s.id} />
+                      <input type="hidden" name="back" value={`/groups/${id}?tab=balances`} />
+                      <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400">Withdraw void request</Button>
                     </form>
                   )}
                 </div>

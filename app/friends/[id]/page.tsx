@@ -5,8 +5,9 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { findFriendship } from "@/lib/data";
 import { netBetween } from "@/lib/balances";
+import { renderActivity, userLabel, type LabelUser } from "@/lib/activity-render";
 import { formatMoney } from "@/lib/format";
-import { confirmSettlementForm, rejectSettlementForm, settleFriendForm, voidSettlementForm } from "../../actions";
+import { confirmSettlementForm, confirmVoidSettlementForm, rejectSettlementForm, rejectVoidSettlementForm, settleFriendForm, voidSettlementForm } from "../../actions";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label } from "@/components/ui/ui";
 export const dynamic = "force-dynamic";
@@ -47,6 +48,21 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
   ]);
   const cur = me.defaultCurrency;
   const net = netBetween(me.id, friendId, expenses, settlements);
+  // R7: friend-level activity (voids, restores, settlement events) was
+  // written but shown nowhere — surface it here for the pair.
+  const pairActivity = await prisma.activity.findMany({
+    where: {
+      groupId: null,
+      OR: [
+        { userId: me.id, subjectId: friendId },
+        { userId: friendId, subjectId: me.id },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  }).catch(() => []);
+  const pairLabelOf = (userId: string | null) =>
+    userLabel(userId === me.id ? (me as LabelUser) : userId === friendId ? (friend as LabelUser) : undefined, me.id);
   const history = [
     ...expenses.map((e) => ({ kind: "expense" as const, at: e.date, expense: e })),
     ...settlements.map((s) => ({ kind: "settlement" as const, at: s.createdAt, settlement: s })),
@@ -87,7 +103,7 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
           <Card key={`e-${h.expense.id}`} className="flex items-center gap-3 py-3">
             <div className="flex-1">
               <div className="font-medium">{h.expense.description}{h.expense.group ? <span className="ml-2 rounded bg-brand-light px-1.5 py-0.5 text-xs font-medium text-brand-dark">{h.expense.group.name}</span> : null}{h.expense.voidedAt ? <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span> : null}</div>
-              <div className="text-xs text-neutral-500">{h.expense.date.toISOString().slice(0, 10)} · {h.expense.paidById === me.id ? "You" : friend.name} paid {formatMoney(h.expense.amountInCents, h.expense.currency)}{h.expense.voidedAt ? " · voided — no longer counts" : ""}</div>
+              <div className="text-xs text-neutral-500">{h.expense.date.toISOString().slice(0, 10)} · {h.expense.paidById === me.id ? "You" : friend.name} paid {formatMoney(h.expense.amountInCents, h.expense.currency)}{h.expense.voidedAt ? ` · voided by ${h.expense.voidedById === me.id ? "you" : h.expense.voidedById === friend.id ? friend.name : "a participant"} on ${h.expense.voidedAt.toISOString().slice(0, 10)} — no longer counts` : ""}</div>
             </div>
             {h.expense.voidedAt ? (
               <span className="text-sm font-medium text-neutral-400 line-through">{formatMoney(h.expense.amountInCents, h.expense.currency)}</span>
@@ -108,6 +124,7 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
                 Settlement
                 {h.settlement.status === "PENDING" && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">Pending confirmation</span>}
                 {h.settlement.status === "VOIDED" && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-500">Voided</span>}
+                {h.settlement.status === "VOID_REQUESTED" && <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs font-semibold text-red-700">Void requested</span>}
               </div>
               <div className="text-xs text-neutral-500">{h.settlement.createdAt.toISOString().slice(0, 10)} · {h.settlement.fromUserId === me.id ? "You" : friend.name} paid {h.settlement.toUserId === me.id ? "you" : friend.name}{h.settlement.status === "PENDING" ? " · doesn't count until confirmed" : ""}</div>
               {h.settlement.status === "PENDING" && h.settlement.recordedById !== me.id && (
@@ -135,14 +152,48 @@ export default async function FriendPage({ params, searchParams }: { params: Pro
                 <form action={voidSettlementForm} className="mt-1.5">
                   <input type="hidden" name="settlementId" value={h.settlement.id} />
                   <input type="hidden" name="back" value={`/friends/${friendId}`} />
-                  <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400 hover:text-red-600">Void</Button>
+                  <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400 hover:text-red-600">Request void</Button>
                 </form>
+              )}
+              {h.settlement.status === "VOID_REQUESTED" && h.settlement.voidRequestedById !== me.id && (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="text-xs text-neutral-500">{friend.name} asked to void this settlement. It keeps counting unless you agree.</span>
+                  <form action={confirmVoidSettlementForm}>
+                    <input type="hidden" name="settlementId" value={h.settlement.id} />
+                    <input type="hidden" name="back" value={`/friends/${friendId}`} />
+                    <Button type="submit" className="px-2.5 py-1 text-xs">Agree to void</Button>
+                  </form>
+                  <form action={rejectVoidSettlementForm}>
+                    <input type="hidden" name="settlementId" value={h.settlement.id} />
+                    <input type="hidden" name="back" value={`/friends/${friendId}`} />
+                    <Button type="submit" variant="secondary" className="px-2.5 py-1 text-xs">Keep it</Button>
+                  </form>
+                </div>
+              )}
+              {h.settlement.status === "VOID_REQUESTED" && h.settlement.voidRequestedById === me.id && (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="text-xs text-neutral-500">You asked to void this — it keeps counting until {friend.name} agrees.</span>
+                  <form action={rejectVoidSettlementForm}>
+                    <input type="hidden" name="settlementId" value={h.settlement.id} />
+                    <input type="hidden" name="back" value={`/friends/${friendId}`} />
+                    <Button type="submit" variant="ghost" className="px-2.5 py-1 text-xs text-neutral-400">Withdraw request</Button>
+                  </form>
+                </div>
               )}
             </div>
             <span className={`font-semibold ${h.settlement.status === "VOIDED" ? "text-neutral-400 line-through" : "text-neutral-600"}`}>{formatMoney(h.settlement.amountInCents, h.settlement.currency)}</span>
           </Card>
         ))}
       </div>
+
+      {pairActivity.length > 0 && (
+        <Card>
+          <h2 className="mb-1 font-semibold">Activity</h2>
+          {pairActivity.map((a) => (
+            <div key={a.id} className="py-1 text-sm text-neutral-600">{a.createdAt.toISOString().slice(0, 16).replace("T", " ")} — {renderActivity(a, pairLabelOf)}</div>
+          ))}
+        </Card>
+      )}
     </div>
   );
 }

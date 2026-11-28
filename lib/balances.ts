@@ -19,11 +19,13 @@ export interface BalanceSettlement {
   toUserId: string;
   amountInCents: number;
   /** N3: only CONFIRMED settlements move balances. Absent = legacy row
-   *  created before confirmation existed, which counts. */
+   *  created before confirmation existed, which counts. R6:
+   *  VOID_REQUESTED still counts — a void takes effect only when the
+   *  other party agrees to it. */
   status?: string;
 }
 
-const counts = (s: BalanceSettlement) => !s.status || s.status === "CONFIRMED";
+const counts = (s: BalanceSettlement) => !s.status || s.status === "CONFIRMED" || s.status === "VOID_REQUESTED";
 
 /**
  * Net amount `otherId` owes `meId`, in cents. Positive = they owe me,

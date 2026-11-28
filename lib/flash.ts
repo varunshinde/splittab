@@ -44,6 +44,8 @@ export const FLASH_MESSAGES = {
   settlement_recorded: "Settlement recorded — it counts once the other person confirms it.",
   settlement_confirmed: "Settlement confirmed — it now counts toward your balances.",
   settlement_voided: "Settlement voided — it no longer counts toward your balances.",
+  settlement_void_requested: "Void requested — the settlement keeps counting until the other person agrees to void it.",
+  settlement_void_declined: "Void request declined — the settlement stays confirmed and keeps counting.",
 } as const;
 
 export type FlashCode = keyof typeof FLASH_MESSAGES;
