@@ -8,8 +8,8 @@ import { decideSignup, normalizeEmail, isValidEmail } from "@/lib/friends";
 import { checkEmailSendIpThrottle, checkEmailSendThrottle, checkLoginIpThrottle, checkLoginLockout, checkSignupThrottle, clientIp, recordAttempt } from "@/lib/ratelimit";
 import { deviceCodeEmailHtml, existingAccountEmailHtml, getAppUrl, newSigninAlertEmailHtml, resetEmailHtml, sendEmail, verificationEmailHtml, type SigninContext } from "@/lib/mail";
 import {
-  challengeState, describeDevice, deviceHashFor, generateLoginCode, hashLoginCode, locationChanged,
-  locationLabel, loginCodeMatches, parseGeo, DEVICE_CHALLENGE_COOKIE, LOGIN_CODE_TTL_MS,
+  challengeState, describeDevice, generateDeviceToken, generateLoginCode, hashDeviceToken, hashLoginCode, locationChanged,
+  locationLabel, loginCodeMatches, parseGeo, DEVICE_CHALLENGE_COOKIE, DEVICE_TOKEN_COOKIE, DEVICE_TOKEN_MAX_AGE_S, LOGIN_CODE_TTL_MS,
 } from "@/lib/device";
 import { flashUrl, passwordFlashCode, type FlashCode } from "@/lib/flash";
 import { RESET_TTL_MS, tokenExpiry, tokenState, VERIFICATION_TTL_MS } from "@/lib/tokens";
@@ -184,16 +184,22 @@ export async function loginAction(formData: FormData) {
     redirect(flashUrl("/login", "error", "unverified", "&unverified=1"));
   }
   await recordAttempt("login", email, ip, true); // success clears the failure counter
-  // --- Device gate ---------------------------------------------------------
+  // --- Device gate (N1) -----------------------------------------------------
+  // Trust is proven by the random device token in the httpOnly
+  // `device_token` cookie (only its hash is stored), NEVER by the
+  // User-Agent — a UA is public and shared by millions of browsers.
   // Trusted device: proceed, but alert by email if the location changed.
   // Untrusted device: NO session yet — email a 6-digit code; the session is
   // created only by verifyDeviceAction after the code checks out.
   const ua = hdrs.get("user-agent") ?? "";
   const geo = parseGeo(hdrs);
-  const dHash = deviceHashFor(ua);
-  const trusted = await prisma.trustedDevice
-    .findUnique({ where: { userId_deviceHash: { userId: user.id, deviceHash: dHash } } })
-    .catch(() => null);
+  const deviceToken = (await cookies()).get(DEVICE_TOKEN_COOKIE)?.value;
+  const trusted = deviceToken
+    ? await prisma.trustedDevice
+        .findUnique({ where: { tokenHash: hashDeviceToken(deviceToken) } })
+        .then((d) => (d && d.userId === user.id ? d : null))
+        .catch(() => null)
+    : null;
   if (trusted) {
     const prev = { city: trusted.city, region: trusted.region, country: trusted.country };
     await prisma.trustedDevice.update({
@@ -217,7 +223,7 @@ export async function loginAction(formData: FormData) {
   const code = generateLoginCode();
   const challenge = await prisma.loginChallenge.create({
     data: {
-      userId: user.id, codeHash: hashLoginCode(code), deviceHash: dHash,
+      userId: user.id, codeHash: hashLoginCode(code),
       userAgent: ua.slice(0, 300), ipAddress: ip,
       city: geo.city, region: geo.region, country: geo.country,
       expiresAt: new Date(Date.now() + LOGIN_CODE_TTL_MS),
@@ -270,13 +276,22 @@ export async function verifyDeviceAction(formData: FormData) {
   if (consumed.count !== 1) redirect(expired);
   store.delete(DEVICE_CHALLENGE_COOKIE);
   if (trust) {
-    await prisma.trustedDevice.upsert({
-      where: { userId_deviceHash: { userId: challenge.userId, deviceHash: challenge.deviceHash } },
-      create: {
-        userId: challenge.userId, deviceHash: challenge.deviceHash, userAgent: challenge.userAgent,
+    // Issue a fresh random device token (N1): the cookie carries the raw
+    // token, the database only its SHA-256 hash. The User-Agent below is
+    // just the Settings display label.
+    const deviceToken = generateDeviceToken();
+    await prisma.trustedDevice.create({
+      data: {
+        userId: challenge.userId, tokenHash: hashDeviceToken(deviceToken), userAgent: challenge.userAgent,
         ipAddress: challenge.ipAddress, city: challenge.city, region: challenge.region, country: challenge.country,
       },
-      update: { lastSeenAt: new Date(), ipAddress: challenge.ipAddress, city: challenge.city, region: challenge.region, country: challenge.country },
+    });
+    store.set(DEVICE_TOKEN_COOKIE, deviceToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: DEVICE_TOKEN_MAX_AGE_S,
     });
   }
   const geo = { city: challenge.city, region: challenge.region, country: challenge.country };
@@ -293,7 +308,14 @@ export async function verifyDeviceAction(formData: FormData) {
 export async function revokeTrustedDeviceAction(formData: FormData) {
   const me = await requireUser();
   const deviceId = String(formData.get("deviceId") ?? "");
+  const target = await prisma.trustedDevice.findFirst({ where: { id: deviceId, userId: me.id }, select: { tokenHash: true } });
   await prisma.trustedDevice.deleteMany({ where: { id: deviceId, userId: me.id } });
+  // Revoking the device you're on also clears its trust cookie.
+  const store = await cookies();
+  const current = store.get(DEVICE_TOKEN_COOKIE)?.value;
+  if (target && current && hashDeviceToken(current) === target.tokenHash) {
+    store.delete(DEVICE_TOKEN_COOKIE);
+  }
   redirect(flashUrl("/settings", "notice", "device_removed"));
 }
 
@@ -361,6 +383,10 @@ export async function resetPasswordAction(formData: FormData) {
     data: { passwordHash, emailVerifiedAt: new Date(), isPlaceholder: false },
   });
   await prisma.session.deleteMany({ where: { userId: token.userId } }); // revoke ALL sessions
+  // N1: a password reset also un-trusts every device — the reset may be
+  // happening precisely because the account was compromised.
+  await prisma.trustedDevice.deleteMany({ where: { userId: token.userId } });
+  await prisma.loginChallenge.deleteMany({ where: { userId: token.userId, usedAt: null } });
   redirect(flashUrl("/login", "notice", "password_updated"));
 }
 
@@ -387,6 +413,10 @@ export async function changePasswordAction(formData: FormData) {
   await prisma.session.deleteMany({
     where: { userId: me.id, ...(token ? { NOT: { tokenHash: hashToken(token) } } : {}) },
   });
+  // N1: un-trust every device on password change, including this one —
+  // the next login everywhere goes through the email-code challenge again.
+  await prisma.trustedDevice.deleteMany({ where: { userId: me.id } });
+  (await cookies()).delete(DEVICE_TOKEN_COOKIE);
   redirect(flashUrl("/settings", "notice", "password_changed"));
 }
 

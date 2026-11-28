@@ -52,7 +52,7 @@ d("F12 account deletion (tombstone)", () => {
     const tokenHash = crypto.createHash("sha256").update(raw).digest("hex");
     await prisma.session.create({ data: { userId, tokenHash, expiresAt: new Date(Date.now() + 3600e3) } });
     jar.set(SESSION_COOKIE, raw);
-    await prisma.trustedDevice.create({ data: { userId, deviceHash: "d".repeat(64), userAgent: "test", ipAddress: "127.0.0.1", city: "Unknown", region: "Unknown", country: "Unknown" } });
+    await prisma.trustedDevice.create({ data: { userId, tokenHash: "d".repeat(64), userAgent: "test", ipAddress: "127.0.0.1", city: "Unknown", region: "Unknown", country: "Unknown" } });
   });
 
   afterAll(async () => {

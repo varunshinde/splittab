@@ -2,9 +2,9 @@ import { prisma } from "@/lib/db";
 import { flashText } from "@/lib/flash";
 import { requireUser } from "@/lib/auth";
 import { getFriends, getMyGroups } from "@/lib/data";
-import { describeDevice, deviceHashFor, locationLabel } from "@/lib/device";
+import { describeDevice, hashDeviceToken, locationLabel, DEVICE_TOKEN_COOKIE } from "@/lib/device";
 import { formatMoney } from "@/lib/format";
-import { headers } from "next/headers";
+import { cookies } from "next/headers";
 import { setDefaultSplitForm, updateProfileForm } from "../actions";
 import { deleteAccountAction } from "../auth-actions";
 import { changePasswordAction, revokeTrustedDeviceAction } from "../auth-actions";
@@ -21,7 +21,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     prisma.defaultSplit.findMany({ where: { userId: me.id }, include: { group: true, otherUser: true } }).catch(() => []),
     prisma.trustedDevice.findMany({ where: { userId: me.id }, orderBy: { lastSeenAt: "desc" } }).catch(() => []),
   ]);
-  const myDeviceHash = deviceHashFor((await headers()).get("user-agent") ?? "");
+  const myToken = (await cookies()).get(DEVICE_TOKEN_COOKIE)?.value;
+  const myTokenHash = myToken ? hashDeviceToken(myToken) : null;
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Settings</h1>
@@ -73,7 +74,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">
                     {describeDevice(d.userAgent)}
-                    {d.deviceHash === myDeviceHash && <span className="ml-2 rounded bg-brand-light px-1.5 py-0.5 text-xs font-semibold text-brand-dark">This device</span>}
+                    {d.tokenHash === myTokenHash && <span className="ml-2 rounded bg-brand-light px-1.5 py-0.5 text-xs font-semibold text-brand-dark">This device</span>}
                   </div>
                   <div className="truncate text-xs text-neutral-500">
                     {locationLabel({ city: d.city, region: d.region, country: d.country })} · IP {d.ipAddress} · last seen {d.lastSeenAt.toISOString().slice(0, 10)}

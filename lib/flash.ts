@@ -30,7 +30,7 @@ export const FLASH_MESSAGES = {
   signup_check_email: "Check your email — we sent you a link to finish setting up your account. If you already have an account, you can just log in.",
   account_ready: "Your account is ready — log in with your new password.",
   password_updated: "Password updated. Please log in with your new password.",
-  password_changed: "Password changed. Your other sessions were signed out.",
+  password_changed: "Password changed. Your other sessions were signed out, and every device will need a sign-in code at its next login.",
   resend_generic: "If an unverified account exists for that email, a new verification link is on its way.",
   reset_generic: "If an account exists for that email, a password reset link is on its way.",
   device_removed: "Device removed. It will need a sign-in code next time it logs in.",

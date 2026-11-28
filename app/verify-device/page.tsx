@@ -41,7 +41,7 @@ export default async function VerifyDevicePage({ searchParams }: { searchParams:
             <Input id="code" name="code" inputMode="numeric" autoComplete="one-time-code" required maxLength={6} placeholder="123456" className="text-center text-lg tracking-[0.3em]" />
           </div>
           <label className="flex items-center gap-2 text-sm text-neutral-600">
-            <input type="checkbox" name="trust" defaultChecked className="h-4 w-4 accent-[#1cc29f]" />
+            <input type="checkbox" name="trust" className="h-4 w-4 accent-[#1cc29f]" />
             Trust this device (skip the code next time)
           </label>
           <Button type="submit" className="w-full py-2.5">Verify and sign in</Button>

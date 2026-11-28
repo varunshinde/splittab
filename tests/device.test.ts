@@ -1,17 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
-  challengeState, describeDevice, deviceHashFor, generateLoginCode, hashLoginCode,
+  challengeState, describeDevice, generateDeviceToken, generateLoginCode, hashDeviceToken, hashLoginCode,
   locationChanged, locationLabel, loginCodeMatches, parseGeo, LOGIN_CODE_MAX_ATTEMPTS,
 } from "../lib/device";
 
 describe("device identity + geo (pure)", () => {
-  it("device hash is a stable SHA-256 of the UA", () => {
-    const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0 Safari/537.36";
-    expect(deviceHashFor(ua)).toMatch(/^[0-9a-f]{64}$/);
-    expect(deviceHashFor(ua)).toBe(deviceHashFor(ua));
-    expect(deviceHashFor(ua)).not.toBe(deviceHashFor(ua + "x"));
-    expect(deviceHashFor(null)).toBe(deviceHashFor("unknown"));
-    expect(deviceHashFor("")).toBe(deviceHashFor("unknown"));
+  it("device tokens are random 32-byte values; only their hash is stored (N1)", () => {
+    const a = generateDeviceToken();
+    const b = generateDeviceToken();
+    expect(a).not.toBe(b); // random, not derived from anything guessable
+    expect(hashDeviceToken(a)).toMatch(/^[0-9a-f]{64}$/);
+    expect(hashDeviceToken(a)).toBe(hashDeviceToken(a));
+    expect(hashDeviceToken(a)).not.toBe(hashDeviceToken(b));
+    expect(hashDeviceToken(a)).not.toContain(a);
   });
 
   it("parseGeo reads Vercel headers, decodes, and falls back to Unknown", () => {

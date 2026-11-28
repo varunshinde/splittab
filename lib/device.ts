@@ -1,12 +1,14 @@
-import { createHash, randomInt, timingSafeEqual } from "crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "crypto";
 
 // Device + geolocation helpers for login security. Pure functions (header
 // access is injected) so they can be unit-tested.
 //
-// A "device" is identified by the SHA-256 of the browser's user-agent
-// string. That is a pragmatic fingerprint: stable for a given browser on a
-// given machine, and it errs on the safe side (a browser update changes the
-// UA, which simply triggers one more email-code challenge).
+// A trusted "device" is proven by a random 32-byte token set in an
+// httpOnly cookie when the user trusts the device after an email-code
+// challenge; only its SHA-256 hash is stored (TrustedDevice.tokenHash).
+// The User-Agent is kept ONLY as a display label — it is not a secret and
+// must never gate access (re-audit N1: a UA hash let anyone with the
+// password and a common UA string skip the code entirely).
 //
 // Location comes from the platform's IP-geolocation headers (Vercel sets
 // x-vercel-ip-country / -city / -country-region on every request). Off
@@ -21,9 +23,17 @@ export interface GeoInfo {
 
 export const UNKNOWN_GEO: GeoInfo = { city: "Unknown", region: "Unknown", country: "Unknown" };
 
-export function deviceHashFor(userAgent: string | null | undefined): string {
-  const ua = (userAgent ?? "").trim() || "unknown";
-  return createHash("sha256").update(ua, "utf8").digest("hex");
+export const DEVICE_TOKEN_COOKIE = "device_token";
+/** Browsers cap cookie lifetimes at 400 days; trusted devices match that. */
+export const DEVICE_TOKEN_MAX_AGE_S = 400 * 24 * 60 * 60;
+
+/** New random device-trust token (the cookie value; never stored raw). */
+export function generateDeviceToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function hashDeviceToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 function decodeHeader(value: string | null): string {

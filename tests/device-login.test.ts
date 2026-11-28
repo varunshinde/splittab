@@ -71,6 +71,7 @@ run("new-device login: email code challenge + trusted devices (DB, mail mocked)"
     return calls[calls.length - 1][0].html as string; // mocked html = the raw code
   };
   let firstCode = "";
+  let trustedToken = "";
 
   beforeAll(async () => {
     prisma = (await import("../lib/db")).prisma;
@@ -122,12 +123,16 @@ run("new-device login: email code challenge + trusted devices (DB, mail mocked)"
     const device = await prisma.trustedDevice.findFirst({ where: { userId } });
     expect(device).not.toBeNull();
     expect(device.city).toBe("Denver");
+    expect(device.tokenHash).toMatch(/^[0-9a-f]{64}$/); // only the hash is stored
+    expect(jar.get("device_token")).toBeTruthy(); // the raw token lives in the cookie
+    trustedToken = jar.get("device_token") as string;
     expect(mail.sendEmail).toHaveBeenCalled(); // "new device" alert
   }, 30000);
 
-  it("second login from the now-trusted device goes straight in; a new location triggers an alert", async () => {
+  it("second login WITH the device-token cookie goes straight in; a new location triggers an alert", async () => {
     await prisma.session.deleteMany({ where: { userId } });
     jar.clear();
+    jar.set("device_token", trustedToken);
     mail.sendEmail.mockClear();
     await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/dashboard/);
     expect(jar.get("session")).toBeTruthy();
@@ -135,12 +140,22 @@ run("new-device login: email code challenge + trusted devices (DB, mail mocked)"
     // Same device, different city -> still trusted, but an alert goes out.
     await prisma.session.deleteMany({ where: { userId } });
     jar.clear();
+    jar.set("device_token", trustedToken);
     (globalThis as Record<string, unknown>).__testGeo = { city: "Austin", region: "TX", country: "US" };
     await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/dashboard/);
     expect(mail.sendEmail).toHaveBeenCalled();
     const device = await prisma.trustedDevice.findFirst({ where: { userId } });
     expect(device.city).toBe("Austin");
     (globalThis as Record<string, unknown>).__testGeo = { city: "Denver", region: "CO", country: "US" };
+  }, 30000);
+
+  it("N1 regression: same User-Agent + correct password but NO device token is challenged", async () => {
+    await prisma.session.deleteMany({ where: { userId } });
+    await prisma.loginAttempt.deleteMany({ where: { kind: "device_code", email } });
+    jar.clear(); // attacker has the password and the exact UA string, but no cookie
+    mail.sendEmail.mockClear();
+    await expect(authActions.loginAction(form({ email, password }))).rejects.toThrow(/NEXT_REDIRECT \/verify-device/);
+    expect(jar.get("session")).toBeUndefined();
   }, 30000);
 
   it("after the device is revoked, login challenges again", async () => {
