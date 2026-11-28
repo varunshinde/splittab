@@ -186,12 +186,19 @@ model Group {
   activities    Activity[]
 }
 
+enum GroupMemberStatus {
+  INVITED
+  MEMBER
+}
+
 model GroupMember {
-  userId   String
-  groupId  String
-  joinedAt DateTime @default(now())
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId      String
+  groupId     String
+  status      GroupMemberStatus @default(MEMBER)
+  invitedById String?
+  joinedAt    DateTime          @default(now())
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group       Group             @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@id([userId, groupId])
 }

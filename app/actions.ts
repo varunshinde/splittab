@@ -199,14 +199,21 @@ export async function createGroupForm(formData: FormData) {
     // friendship, and the response doesn't reveal it.
     if (!(await blockedBy(me.id, u.id))) invitees.push(u);
   }
+  // N2: invitees start as INVITED — membership (and friendship) begins
+  // only when they accept. Until then they see an invitation, accrue no
+  // splits, and the group does not appear in their group list.
   const group = await prisma.group.create({
     data: {
       name, type, baseCurrency,
-      members: { create: [...new Set([me.id, ...invitees.map((u) => u.id)])].map((userId) => ({ userId })) },
+      members: {
+        create: [
+          { userId: me.id, status: "MEMBER" },
+          ...[...new Set(invitees.map((u) => u.id))].map((userId) => ({ userId, status: "INVITED" as const, invitedById: me.id })),
+        ],
+      },
       activities: { create: { userId: me.id, type: "group_created", message: `Group "${name}" created` } },
     },
   });
-  for (const u of invitees) await befriend(me.id, u.id);
   await recordAction("group_create", me.email, clientIp(await headers()));
   revalidatePath("/groups");
   redirect(`/groups/${group.id}`);
@@ -220,26 +227,60 @@ export async function addGroupMemberForm(formData: FormData) {
   const groupId = String(formData.get("groupId") ?? "");
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
-  if (!membership) throw new Error("you are not a member of this group");
+  if (!membership || membership.status !== "MEMBER") throw new Error("you are not a member of this group");
   if (!isValidEmail(email) || email === normalizeEmail(me.email)) redirect(flashUrl(`/groups/${groupId}?tab=members`, "error", "member_email_invalid"));
   const { user } = await resolveUserByEmail(email);
   if (await blockedBy(me.id, user.id)) {
     // They blocked me: silently do nothing, same outward response (F1).
     redirect(flashUrl(`/groups/${groupId}?tab=members`, "notice", "member_added"));
   }
+  // N2: an invitation, not instant membership. The friendship is created
+  // only when the invitee accepts (acceptGroupInviteForm).
   await prisma.groupMember.upsert({
     where: { userId_groupId: { userId: user.id, groupId } },
-    create: { userId: user.id, groupId },
+    create: { userId: user.id, groupId, status: "INVITED", invitedById: me.id },
     update: {},
   });
-  await befriend(me.id, user.id);
-  await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_added", message: `${user.name} added to the group` } });
+  // The activity echoes the address AS TYPED by the inviter (N6): showing
+  // the resolved account name here would be an email->name oracle.
+  await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_invited", message: `Invited ${email} to the group` } });
   await recordAction("group_member_add", me.email, clientIp(await headers()));
   revalidatePath(`/groups/${groupId}`);
   // Non-revealing response (F3): don't confirm the real name behind an
   // arbitrary email to the person adding it. (Co-members see names in the
   // members list by design — that's different from an email->name oracle.)
   redirect(flashUrl(`/groups/${groupId}?tab=members`, "notice", "member_added"));
+}
+
+/** Accept a group invitation (N2): membership starts now, and the
+ *  friendship with the inviter becomes ACCEPTED (co-membership model) —
+ *  never before acceptance, and never across a block. */
+export async function acceptGroupInviteForm(formData: FormData) {
+  const me = await requireUser();
+  const groupId = String(formData.get("groupId") ?? "");
+  const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
+  if (!membership || membership.status !== "INVITED") throw new Error("no pending invitation for this group");
+  await prisma.groupMember.update({
+    where: { userId_groupId: { userId: me.id, groupId } },
+    data: { status: "MEMBER", joinedAt: new Date() },
+  });
+  if (membership.invitedById && membership.invitedById !== me.id) {
+    await befriend(membership.invitedById, me.id);
+  }
+  await prisma.activity.create({ data: { groupId, userId: me.id, type: "member_joined", message: `${me.name} joined the group` } });
+  revalidatePath("/dashboard");
+  revalidatePath(`/groups/${groupId}`);
+  redirect(`/groups/${groupId}`);
+}
+
+/** Decline a group invitation (N2): the invitation row is removed and
+ *  nothing else about me changes — no membership, no friendship, no debt. */
+export async function declineGroupInviteForm(formData: FormData) {
+  const me = await requireUser();
+  const groupId = String(formData.get("groupId") ?? "");
+  await prisma.groupMember.deleteMany({ where: { userId: me.id, groupId, status: "INVITED" } });
+  revalidatePath("/dashboard");
+  redirect("/dashboard");
 }
 
 /** Leave a group (F1): removes my membership. My past expenses stay as
@@ -279,7 +320,9 @@ async function createExpense(meId: string, input: CreateExpenseInput) {
   if (input.participantIds.length === 0) throw new Error("at least one participant is required");
   let allowedIds: Set<string>;
   if (input.groupId) {
-    const members = await prisma.groupMember.findMany({ where: { groupId: input.groupId } });
+    // N2: only ACCEPTED members can be charged — an invited (not yet
+    // accepted) member accrues no splits and no debt.
+    const members = await prisma.groupMember.findMany({ where: { groupId: input.groupId, status: "MEMBER" } });
     if (!members.some((m) => m.userId === meId)) throw new Error("you are not a member of this group");
     allowedIds = new Set(members.map((m) => m.userId));
   } else {
@@ -339,7 +382,7 @@ export async function addExpenseForm(formData: FormData) {
 export async function addGroupExpenseForm(formData: FormData) {
   const me = await requireUser();
   const groupId = String(formData.get("groupId") ?? "");
-  const members = await prisma.groupMember.findMany({ where: { groupId } });
+  const members = await prisma.groupMember.findMany({ where: { groupId, status: "MEMBER" } });
   if (!members.some((m) => m.userId === me.id)) throw new Error("you are not a member of this group");
   const memberIds = new Set(members.map((m) => m.userId));
   const participantIds = formData.getAll("participantIds").map(String).filter((id) => memberIds.has(id));
@@ -523,7 +566,7 @@ export async function grantTripPassForm(formData: FormData) {
   const groupId = String(formData.get("groupId") ?? "");
   if (!canGrantTripPass(me)) throw new Error("only Pro users can grant a Trip Pass");
   const membership = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
-  if (!membership) throw new Error("you are not a member of this group");
+  if (!membership || membership.status !== "MEMBER") throw new Error("you are not a member of this group");
   await prisma.tripPass.create({ data: { grantedByUserId: me.id, groupId, expiresAt: tripPassExpiry(new Date()) } });
   await prisma.activity.create({ data: { groupId, userId: me.id, type: "trip_pass_granted", message: "Trip Pass granted (30 days of Pro for this group)" } });
   revalidatePath(`/groups/${groupId}`);
@@ -538,7 +581,7 @@ export async function setDefaultSplitForm(formData: FormData) {
   const otherUserId = String(formData.get("otherUserId") ?? "") || null;
   if (groupId) {
     const m = await prisma.groupMember.findUnique({ where: { userId_groupId: { userId: me.id, groupId } } });
-    if (!m) throw new Error("not your group");
+    if (!m || m.status !== "MEMBER") throw new Error("not your group");
   }
   if (otherUserId && !(await areFriends(me.id, otherUserId))) throw new Error("not your friend");
   await prisma.defaultSplit.create({ data: { userId: me.id, percentage, groupId, otherUserId } });

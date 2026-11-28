@@ -19,7 +19,7 @@ export default async function NewExpensePage({ searchParams }: { searchParams: P
           friends={friends.map((f) => ({ id: f.id, name: f.name, email: f.email, isPlaceholder: f.isPlaceholder }))}
           groups={groups.map((g) => ({
             id: g.id, name: g.name, baseCurrency: g.baseCurrency,
-            members: g.members.map((m) => ({ id: m.user.id, name: m.user.name, email: m.user.email, isPlaceholder: m.user.isPlaceholder })),
+            members: g.members.filter((m) => m.status === "MEMBER").map((m) => ({ id: m.user.id, name: m.user.name, email: m.user.email, isPlaceholder: m.user.isPlaceholder })),
           }))}
           preselectedFriendId={sp.friend && friends.some((f) => f.id === sp.friend) ? sp.friend : undefined}
         />

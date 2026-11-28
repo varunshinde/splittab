@@ -84,10 +84,27 @@ export async function getMySettlements(userId: string) {
 
 export async function getMyGroups(userId: string) {
   return prisma.group.findMany({
-    where: { members: { some: { userId } } },
+    // N2: only groups I have ACCEPTED membership in — invitations are
+    // listed separately (getGroupInvitations) and confer no access.
+    where: { members: { some: { userId, status: "MEMBER" } } },
     include: { members: { include: { user: true } }, expenses: { include: { splits: true } }, settlements: true },
     orderBy: { createdAt: "desc" },
   });
+}
+
+/** Groups I have been invited to but have not accepted yet (N2). */
+export async function getGroupInvitations(userId: string) {
+  const rows = await prisma.groupMember.findMany({
+    where: { userId, status: "INVITED" },
+    include: { group: true },
+    orderBy: { joinedAt: "desc" },
+  });
+  const inviterIds = [...new Set(rows.map((r) => r.invitedById).filter(Boolean))] as string[];
+  const inviters = inviterIds.length
+    ? await prisma.user.findMany({ where: { id: { in: inviterIds } }, select: { id: true, name: true } })
+    : [];
+  const nameOf = new Map(inviters.map((u) => [u.id, u.name]));
+  return rows.map((r) => ({ group: r.group, invitedByName: r.invitedById ? nameOf.get(r.invitedById) ?? null : null }));
 }
 
 /** A group only if I am a member — otherwise null (callers 404). */

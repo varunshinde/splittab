@@ -39,7 +39,7 @@ export const FLASH_MESSAGES = {
   already_friends: "You are already friends with this person.",
   friend_request_accepted: "Friend request accepted — you are now friends.",
   friend_request_sent: "Friend request sent. When they accept, you'll be able to split expenses together.",
-  member_added: "Member added.",
+  member_added: "Invitation sent. They'll become a member when they accept.",
   already_settled: "You are already settled up.",
   settlement_recorded: "Settlement recorded.",
 } as const;

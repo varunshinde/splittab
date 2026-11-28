@@ -7,7 +7,7 @@ import { formatMoney } from "@/lib/format";
 import { computeBalances, computeSimplifiedDebts } from "@/lib/debt";
 import { convertCurrency } from "@/lib/currency";
 import { hasProAccess } from "@/lib/pro";
-import { addGroupExpenseForm, addGroupMemberForm, grantTripPassForm, leaveGroupForm, recordSettlementForm } from "../../actions";
+import { acceptGroupInviteForm, addGroupExpenseForm, addGroupMemberForm, declineGroupInviteForm, grantTripPassForm, leaveGroupForm, recordSettlementForm } from "../../actions";
 import { SpendingCharts } from "@/components/Charts";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card, Input, Label, selectClass } from "@/components/ui/ui";
@@ -21,6 +21,34 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
   // Membership-scoped fetch: a non-member gets a 404, never the group's data.
   const group = await getMyGroup(me.id, id).catch(() => null);
   if (!group) notFound();
+
+  // N2: an invited (not yet accepted) user sees ONLY the invitation —
+  // no expenses, balances, member list or activity until they accept.
+  const myMembership = group.members.find((m) => m.userId === me.id);
+  if (myMembership?.status === "INVITED") {
+    const inviter = myMembership.invitedById ? group.members.find((m) => m.userId === myMembership.invitedById)?.user : null;
+    return (
+      <div className="mx-auto max-w-lg space-y-4">
+        <h1 className="text-2xl font-bold">Group invitation</h1>
+        <Card>
+          <p className="text-sm text-neutral-600">
+            {inviter ? <><strong>{inviter.name}</strong> invited you</> : "You were invited"} to join <strong>{group.name}</strong>.
+            If you accept, you become a member and can split expenses in this group from then on. Nothing is charged to you before you accept.
+          </p>
+          <div className="mt-4 flex gap-2">
+            <form action={acceptGroupInviteForm}>
+              <input type="hidden" name="groupId" value={id} />
+              <Button type="submit">Accept invitation</Button>
+            </form>
+            <form action={declineGroupInviteForm}>
+              <input type="hidden" name="groupId" value={id} />
+              <Button type="submit" variant="secondary">Decline</Button>
+            </form>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   const balances = computeBalances(group.expenses);
   // Apply this group's recorded settlements on top of expense balances.
@@ -96,12 +124,12 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
               </div>
               <div><Label>Paid by</Label>
                 <select name="paidById" className={`${selectClass} w-full`} defaultValue={me.id}>
-                  {group.members.map((m) => <option key={m.userId} value={m.userId}>{m.userId === me.id ? "You" : m.user.name}</option>)}
+                  {group.members.filter((m) => m.status === "MEMBER").map((m) => <option key={m.userId} value={m.userId}>{m.userId === me.id ? "You" : m.user.name}</option>)}
                 </select></div>
               <div><Label>Split mode</Label>
                 <select name="mode" className={`${selectClass} w-full`}><option value="equal">Equal</option><option value="exact">Exact amounts</option><option value="percentage">Percentages</option></select></div>
               <div className="space-y-1 text-sm">
-                {group.members.map((m) => (
+                {group.members.filter((m) => m.status === "MEMBER").map((m) => (
                   <div key={m.userId} className="flex items-center gap-2">
                     <label className="flex w-40 items-center gap-2"><input type="checkbox" name="participantIds" value={m.userId} defaultChecked className="h-4 w-4 accent-[#1cc29f]" /> {m.userId === me.id ? "You" : m.user.name}</label>
                     <Input name={`pct_${m.userId}`} type="number" placeholder="% (percentage mode)" className="w-44" />
@@ -168,18 +196,18 @@ export default async function GroupPage({ params, searchParams }: { params: Prom
                 <Avatar name={m.user.name} seed={m.user.email} size="sm" />
                 <div className="flex-1">
                   <div className="font-medium">{m.userId === me.id ? "You" : m.user.name}{m.user.isPro ? " · Pro" : ""}</div>
-                  <div className="text-xs text-neutral-500">{m.user.email}{m.user.isPlaceholder ? " · invited, not signed up yet" : ""}</div>
+                  <div className="text-xs text-neutral-500">{m.user.email}{m.status === "INVITED" ? " · invitation pending" : m.user.isPlaceholder ? " · invited, not signed up yet" : ""}</div>
                 </div>
               </div>
             ))}
           </Card>
           <Card>
-            <h2 className="mb-1 font-semibold">Add a member by email</h2>
-            <p className="mb-3 text-sm text-neutral-500">They&rsquo;ll be added right away — no account needed. Their share is claimed when they sign up with this email.</p>
+            <h2 className="mb-1 font-semibold">Invite a member by email</h2>
+            <p className="mb-3 text-sm text-neutral-500">They&rsquo;ll get an invitation and become a member only when they accept — no account needed to be invited. Nothing is charged to them before they accept.</p>
             <form action={addGroupMemberForm} className="flex flex-wrap items-end gap-2">
               <input type="hidden" name="groupId" value={id} />
               <div className="min-w-64 flex-1"><Label htmlFor="email">Email address</Label><Input id="email" name="email" type="email" required placeholder="friend@example.com" /></div>
-              <Button type="submit">Add member</Button>
+              <Button type="submit">Send invitation</Button>
             </form>
           </Card>
           <Card>

@@ -62,7 +62,7 @@ export default async function GroupsPage() {
           </div>
           <div><Label htmlFor="inviteEmails">Invite members by email (optional)</Label>
             <textarea id="inviteEmails" name="inviteEmails" rows={2} className={textareaClass} placeholder="friend@example.com, other@example.com" />
-            <p className="mt-1 text-xs text-neutral-400">People without an account are added as invited members — their share is tracked and claimed when they sign up.</p></div>
+            <p className="mt-1 text-xs text-neutral-400">Invited people become members only when they accept — nothing is charged to them before that. People without an account see the invitation when they sign up with this email.</p></div>
           <Button type="submit">Create group</Button>
         </form>
       </Card>

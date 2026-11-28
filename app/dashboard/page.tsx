@@ -1,20 +1,22 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { getMyExpenses, getMyGroups, getMySettlements } from "@/lib/data";
+import { getGroupInvitations, getMyExpenses, getMyGroups, getMySettlements } from "@/lib/data";
 import { dashboardTotals, myNet, pairwiseNets } from "@/lib/balances";
 import { expenseToCurrency, settlementToCurrency } from "@/lib/convert";
 import { formatMoney } from "@/lib/format";
 import { Avatar } from "@/components/Avatar";
 import { Button, Card } from "@/components/ui/ui";
+import { acceptGroupInviteForm, declineGroupInviteForm } from "../actions";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const me = await requireUser();
   const cur = me.defaultCurrency;
-  const [expensesRaw, settlementsRaw, groups] = await Promise.all([
+  const [expensesRaw, settlementsRaw, groups, invitations] = await Promise.all([
     getMyExpenses(me.id),
     getMySettlements(me.id),
     getMyGroups(me.id),
+    getGroupInvitations(me.id),
   ]);
   const expenses = expensesRaw.map((e) => expenseToCurrency(e, cur));
   const settlements = settlementsRaw.map((s) => settlementToCurrency(s, cur));
@@ -51,6 +53,29 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-bold">Dashboard</h1>
+
+      {invitations.length > 0 && (
+        <Card className="border-brand/40 bg-brand-light/40">
+          <h2 className="mb-2 font-semibold">Group invitations</h2>
+          <div className="space-y-2">
+            {invitations.map(({ group, invitedByName }) => (
+              <div key={group.id} className="flex flex-wrap items-center gap-3">
+                <span className="min-w-0 flex-1 text-sm">
+                  <strong>{group.name}</strong>{invitedByName ? <> — invited by {invitedByName}</> : null}
+                </span>
+                <form action={acceptGroupInviteForm}>
+                  <input type="hidden" name="groupId" value={group.id} />
+                  <Button type="submit" className="px-3 py-1.5 text-xs">Accept</Button>
+                </form>
+                <form action={declineGroupInviteForm}>
+                  <input type="hidden" name="groupId" value={group.id} />
+                  <Button type="submit" variant="secondary" className="px-3 py-1.5 text-xs">Decline</Button>
+                </form>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card className="grid grid-cols-3 divide-x divide-neutral-200 p-0 text-center">
         <div className="p-4">
