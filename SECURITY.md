@@ -64,6 +64,15 @@ within a few days; please allow reasonable time for a fix before disclosing.
 - **Friend expenses** cannot place two people who are not friends with
   each other into a shared ledger; that is what groups are for.
 
+## Itemization v2 (Nov 2026)
+
+- Receipt items may be assigned to a subset of participants
+  (`assignedToUserIds`); only the payer can *apply* an itemization, which
+  rewrites the expense's split rows in a single transaction and records
+  the change in activity. Items totaling more than the expense are
+  rejected. Receipt upload goes through the same payer-only, magic-byte
+  and quota checks as before, now reachable from the receipt page.
+
 ## Scope notes
 
 The Docker setup is for local development: Postgres is bound to localhost
